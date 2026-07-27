@@ -1,0 +1,1 @@
+const fs = require('fs'); let c = fs.readFileSync('src/data/examples.js', 'utf8'); c = c.replace(/\\\\\\\\\\\/g, '\\\\'); c = c.replace(/\\\\\\\\\$/g, '\\\\$'); fs.writeFileSync('src/data/examples.js', c); console.log('fixed');
