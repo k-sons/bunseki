@@ -53,11 +53,18 @@ export function parseBehavior(code) {
     }
   }
 
-  const components = findComponents(ast).map(comp => {
-    const collected = collectComponent(comp)
+  const found = findComponents(ast)
+
+  // 중첩 컴포넌트의 상태·Effect 가 바깥 컴포넌트 것으로 섞이지 않도록,
+  // 수집할 때 다른 컴포넌트의 영역은 건너뜁니다.
+  const componentNodes = new Set(found.map(c => c.node))
+
+  const components = found.map(comp => {
+    const collected = collectComponent(comp, componentNodes)
     return {
       name: comp.name,
       startLine: comp.startLine,
+      parent: comp.parent,
       states: collected.states,
       effects: describeEffects(collected.effects),
       events: buildEvents(comp.name, collected),

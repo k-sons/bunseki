@@ -64,10 +64,11 @@ function resolveHandlerSetters(handler, localFns, setterNames) {
     const fn = localFns[fnName]
     if (!fn) return
 
-    viaFns.push(fnName)
-    findSetterUsage(fn, setterNames).forEach(s => setters.add(s))
+    // 선언된 줄을 함께 담아 스텝에서 그 위치로 이동할 수 있게 합니다
+    viaFns.push({ name: fnName, line: fn.line })
+    findSetterUsage(fn.node, setterNames).forEach(s => setters.add(s))
     // 메서드 호출(obj.foo())은 로컬 함수가 아니므로 따라가지 않습니다
-    findDirectCalls(fn, setterNames).forEach(next => follow(next, depth + 1))
+    findDirectCalls(fn.node, setterNames).forEach(next => follow(next, depth + 1))
   }
 
   if (handler.expr.type === 'Identifier') {
@@ -93,15 +94,15 @@ function buildFlow({ handler, setter, viaFns, setterToState, effects, setterName
     badges: [],
   })
 
-  if (viaFns.length > 0) {
+  // 거쳐 가는 함수는 각각 별도 스텝으로 — 저마다 선언 위치로 이동할 수 있게
+  viaFns.forEach(fn => {
     steps.push({
       kind: 'call',
-      label: viaFns.map(f => `${f}()`).join('  →  '),
-      detail: viaFns.length > 1 ? '함수를 거쳐 호출됩니다' : null,
-      line: null,
+      label: `${fn.name}()`,
+      line: fn.line,
       badges: [],
     })
-  }
+  })
 
   const state = setterToState[setter]
   steps.push({
@@ -152,8 +153,8 @@ function appendEffectSteps({ steps, state, effects, setterToState, setterNames, 
     for (const fn of calls) {
       steps.push({
         kind: 'call',
-        label: `${fn}()`,
-        line: null,
+        label: `${fn.name}()`,
+        line: fn.line,
         badges: async.length ? ['비동기'] : [],
       })
     }

@@ -64,6 +64,12 @@ export function renderBehaviorView(result, onNavigate) {
     const name = document.createElement('div')
     name.className = 'behavior-comp__name'
     name.textContent = comp.name
+    if (comp.parent) {
+      const inside = document.createElement('span')
+      inside.className = 'behavior-comp__parent'
+      inside.textContent = `${comp.parent} 안에 중첩됨`
+      name.appendChild(inside)
+    }
     group.appendChild(name)
 
     const chips = document.createElement('div')

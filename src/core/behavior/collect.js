@@ -30,20 +30,35 @@ const NOISE_METHODS = [
 
 /**
  * AST 노드를 재귀로 훑습니다.
+ *
  * @param {object} node
  * @param {(n: object) => void} visit
+ * @param {((n: object) => boolean)} [skip] - true 를 돌려주면 그 가지 전체를 건너뜁니다.
+ *   중첩 컴포넌트의 상태·Effect 가 바깥 컴포넌트 것으로 섞이지 않게 하는 데 씁니다.
  */
-export function walk(node, visit) {
+export function walk(node, visit, skip) {
   if (!node || typeof node !== 'object') return
   if (Array.isArray(node)) {
-    for (const n of node) walk(n, visit)
+    for (const n of node) walk(n, visit, skip)
     return
   }
-  if (typeof node.type === 'string') visit(node)
+  if (typeof node.type === 'string') {
+    if (skip && skip(node)) return
+    visit(node)
+  }
   for (const key of Object.keys(node)) {
     if (key === 'loc' || key === 'leadingComments' || key === 'trailingComments') continue
-    walk(node[key], visit)
+    walk(node[key], visit, skip)
   }
+}
+
+/** 이 노드 안에 JSX 가 있는가 — 중첩 컴포넌트 판별에 씁니다 */
+function containsJSX(node) {
+  let found = false
+  walk(node, (n) => {
+    if (n.type === 'JSXElement' || n.type === 'JSXFragment') found = true
+  })
+  return found
 }
 
 const lineOf = (n) => (n && n.loc ? n.loc.start.line : null)
@@ -65,16 +80,20 @@ const isFunctionNode = (n) =>
         n.type === 'FunctionDeclaration')
 
 /**
- * 최상위에서 React 컴포넌트로 보이는 함수를 찾습니다.
- * 판별 기준은 기존 파서와 동일하게 "대문자로 시작하는 이름"입니다.
- * @returns {{name: string, node: object, startLine: number}[]}
+ * React 컴포넌트로 보이는 함수를 찾습니다.
+ *
+ * 최상위 선언은 "대문자로 시작하는 이름"만으로 판별합니다 (기존 파서와 동일).
+ * 다른 함수 안에 중첩된 것은 대문자 + JSX 포함까지 확인합니다 — 이름만 보고
+ * 넘기면 대문자로 시작하는 평범한 헬퍼까지 컴포넌트로 잡히기 때문입니다.
+ *
+ * @returns {{name, node, startLine, parent: string|null}[]}
  */
 export function findComponents(ast) {
-  const found = []
+  const top = []
 
   const add = (name, fnNode, declNode) => {
     if (!name || !/^[A-Z]/.test(name) || !fnNode) return
-    found.push({ name, node: fnNode, startLine: lineOf(declNode || fnNode) })
+    top.push({ name, node: fnNode, startLine: lineOf(declNode || fnNode), parent: null })
   }
 
   for (const stmt of ast.program.body) {
@@ -95,24 +114,59 @@ export function findComponents(ast) {
     }
   }
 
-  return found
+  // 최상위 컴포넌트 안쪽에 숨어 있는 컴포넌트들
+  const nested = []
+  for (const comp of top) {
+    walk(comp.node, (n) => {
+      if (n === comp.node) return
+
+      let name = null
+      let fnNode = null
+      let declNode = null
+
+      if (n.type === 'FunctionDeclaration' && n.id) {
+        name = n.id.name
+        fnNode = n
+        declNode = n
+      } else if (n.type === 'VariableDeclarator' && n.id && n.id.type === 'Identifier' && isFunctionNode(n.init)) {
+        name = n.id.name
+        fnNode = n.init
+        declNode = n
+      }
+
+      if (!name || !/^[A-Z]/.test(name)) return
+      if (!containsJSX(fnNode)) return
+
+      nested.push({ name, node: fnNode, startLine: lineOf(declNode), parent: comp.name })
+    })
+  }
+
+  return [...top, ...nested]
 }
 
 /**
  * 컴포넌트 하나의 내부를 수집합니다.
+ *
  * @param {{name: string, node: object}} comp
+ * @param {Set<object>} [componentNodes] - 전체 컴포넌트 노드 집합.
+ *   자기 자신을 뺀 나머지는 건너뛰어, 중첩 컴포넌트의 상태가
+ *   바깥 컴포넌트 것으로 섞이지 않게 합니다.
  */
-export function collectComponent(comp) {
+export function collectComponent(comp, componentNodes) {
+  const skip = componentNodes
+    ? (n) => n !== comp.node && componentNodes.has(n)
+    : undefined
+
   return {
-    states: collectStates(comp.node),
-    effects: collectEffects(comp.node),
-    localFns: collectLocalFunctions(comp.node),
-    handlers: collectHandlers(comp.node),
+    states: collectStates(comp.node, skip),
+    effects: collectEffects(comp.node, skip),
+    localFns: collectLocalFunctions(comp.node, skip),
+    handlers: collectHandlers(comp.node, skip),
   }
 }
 
 /** `const [open, setOpen] = useState(...)` 에서 상태 ↔ setter 결합을 뽑습니다 */
-function collectStates(root) {
+function collectStates(root, skip) {
   const states = []
   walk(root, (n) => {
     if (n.type !== 'VariableDeclarator') return
@@ -127,12 +181,12 @@ function collectStates(root) {
       setter: setterEl && setterEl.type === 'Identifier' ? setterEl.name : null,
       line: lineOf(n),
     })
-  })
+  }, skip)
   return states
 }
 
 /** useEffect 의 의존성 배열과 본문을 수집합니다 */
-function collectEffects(root) {
+function collectEffects(root, skip) {
   const effects = []
   walk(root, (n) => {
     const name = calleeName(n)
@@ -150,26 +204,29 @@ function collectEffects(root) {
     else trigger = 'deps'
 
     effects.push({ hook: name, deps, trigger, line: lineOf(n), body: fnArg })
-  })
+  }, skip)
   return effects
 }
 
-/** 컴포넌트 안에 선언된 이름붙은 함수 — 핸들러의 간접 호출을 따라가는 데 씁니다 */
-function collectLocalFunctions(root) {
+/**
+ * 컴포넌트 안에 선언된 이름붙은 함수 — 핸들러의 간접 호출을 따라가는 데 씁니다.
+ * 선언된 줄도 함께 담아 스텝에서 그 위치로 이동할 수 있게 합니다.
+ */
+function collectLocalFunctions(root, skip) {
   const fns = {}
   walk(root, (n) => {
     if (n.type === 'VariableDeclarator' && n.id && n.id.type === 'Identifier' && isFunctionNode(n.init)) {
-      fns[n.id.name] = n.init
+      fns[n.id.name] = { node: n.init, line: lineOf(n) }
     }
     if (n.type === 'FunctionDeclaration' && n.id) {
-      fns[n.id.name] = n
+      fns[n.id.name] = { node: n, line: lineOf(n) }
     }
-  })
+  }, skip)
   return fns
 }
 
 /** JSX 의 onXxx 속성을 수집합니다 */
-function collectHandlers(root) {
+function collectHandlers(root, skip) {
   const handlers = []
 
   walk(root, (n) => {
@@ -189,7 +246,7 @@ function collectHandlers(root) {
         expr: attr.value.expression,
       })
     }
-  })
+  }, skip)
 
   return handlers
 }
@@ -237,7 +294,7 @@ export function findCalls(node, exclude = []) {
     }
   })
 
-  const calls = new Set()
+  const calls = new Map() // name -> line (첫 호출 위치)
   walk(node, (n) => {
     if (n.type !== 'CallExpression') return
     const name = calleeName(n)
@@ -246,9 +303,9 @@ export function findCalls(node, exclude = []) {
     if (declaredHere.has(name)) return
     if (NOISE_METHODS.includes(name)) return
     if (/^use[A-Z]/.test(name)) return
-    calls.add(name)
+    if (!calls.has(name)) calls.set(name, lineOf(n))
   })
-  return [...calls]
+  return [...calls].map(([name, line]) => ({ name, line }))
 }
 
 /**
