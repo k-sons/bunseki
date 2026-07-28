@@ -30,12 +30,48 @@
 /**
  * 함수 선언 파싱 (function 키워드 + 화살표 함수)
  */
+/**
+ * 선언부가 여러 줄에 걸친 경우 한 줄로 합쳐서 돌려줍니다.
+ *
+ *   function Card({
+ *     title,
+ *     body
+ *   }) {
+ *
+ * 아래 정규식들은 매개변수 목록 `(...)` 이 같은 줄에서 닫히기를 요구하므로,
+ * 합쳐 주지 않으면 이런 선언은 함수로 인식되지 않습니다.
+ * 괄호가 닫힐 때까지만 이어 붙입니다.
+ */
+function joinDeclaration(lines, startIdx) {
+  let joined = lines[startIdx].trim()
+  if (!joined.includes('(')) return joined
+
+  let depth = 0
+  const countParens = (s) => {
+    for (const c of s) {
+      if (c === '(') depth++
+      else if (c === ')') depth--
+    }
+  }
+
+  countParens(joined)
+  if (depth <= 0) return joined
+
+  const MAX_SPAN = 20
+  for (let i = startIdx + 1; i < lines.length && i - startIdx <= MAX_SPAN; i++) {
+    joined += ' ' + lines[i].trim()
+    countParens(lines[i])
+    if (depth <= 0) break
+  }
+
+  return joined
+}
+
 function parseFunctions(lines, code) {
   const results = []
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    const trimmed = line.trim()
+    const trimmed = joinDeclaration(lines, i)
 
     // function declaration: async function Name(...) or function Name(...)
     let match = trimmed.match(/^(?:export\s+(?:default\s+)?)?(?:(async)\s+)?function\s+(\w+)\s*\(([^)]*)\)/)
@@ -268,6 +304,22 @@ function parseConstants(lines) {
   return results
 }
 
+/**
+ * 커스텀 훅을 "정의하는" 줄인지 판별합니다.
+ *
+ *   function useSearch() {          ← 정의. 사용 횟수로 세면 안 됨
+ *   const useSearch = () => {       ← 정의
+ *   const { data } = useSearch()    ← 사용
+ *
+ * 정의 줄도 `useXxx(` 패턴에 걸리기 때문에, 걸러내지 않으면 선언만 해도
+ * "1회 사용"으로 집계되고 자기 자신을 훅 목록에 넣게 됩니다.
+ */
+function isHookDeclaration(line) {
+  const trimmed = line.trim()
+  return /^(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+use[A-Z]/.test(trimmed) ||
+         /^(?:export\s+)?(?:const|let|var)\s+use[A-Z]\w*\s*=/.test(trimmed)
+}
+
 /** React Hook 호출 파싱 */
 function parseHooks(lines) {
   const results = []
@@ -275,6 +327,7 @@ function parseHooks(lines) {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
+    if (isHookDeclaration(line)) continue
 
     for (const hook of allHooks) {
       if (line.includes(hook + '(') || line.includes(hook + '<')) {
@@ -497,21 +550,51 @@ function buildRelations(functions, code) {
 
 /* ===== Helpers ===== */
 
-/** 블록({...}) 끝 라인 찾기 */
+/**
+ * 블록({...}) 끝 라인 찾기
+ *
+ * 매개변수 구조분해를 건너뛰어야 합니다.
+ *
+ *   function SearchBox({ onSearch, onClear }) {
+ *                      ↑          ↑
+ *                      여기 중괄호를 본문으로 세면 깊이가 0으로 돌아가
+ *                      함수가 1줄짜리로 보고됩니다.
+ *
+ * 그래서 괄호 깊이도 함께 추적해, 매개변수 목록이 닫히기 전의 중괄호는
+ * 세지 않습니다.
+ */
 function findBlockEnd(lines, startIdx) {
-  let depth = 0
-  let started = false
+  let braceDepth = 0
+  let parenDepth = 0
+  let paramsDone = false   // 매개변수 목록이 닫혔는가
+  let started = false      // 본문 블록이 시작됐는가
 
   for (let i = startIdx; i < lines.length; i++) {
-    const line = lines[i]
-    for (const ch of line) {
-      if (ch === '{') { depth++; started = true; }
-      if (ch === '}') { depth--; }
-      if (started && depth === 0) return i
+    for (const ch of lines[i]) {
+      if (ch === '(') {
+        parenDepth++
+      } else if (ch === ')') {
+        parenDepth--
+        if (parenDepth === 0) paramsDone = true
+      } else if (ch === '{') {
+        if (!paramsDone && parenDepth > 0) continue  // 매개변수 안의 중괄호
+        braceDepth++
+        started = true
+      } else if (ch === '}') {
+        if (!paramsDone && parenDepth > 0) continue
+        braceDepth--
+      }
+
+      if (started && braceDepth === 0) return i
     }
   }
 
-  return Math.min(startIdx + 1, lines.length - 1)
+  // 본문 블록을 아예 못 찾음 → 중괄호 없는 한 줄 화살표 함수
+  //   const add = (a, b) => a + b
+  if (!started) return startIdx
+
+  // 블록은 열렸는데 안 닫힘 → 코드가 잘림. 파일 끝까지로 봅니다.
+  return lines.length - 1
 }
 
 /** 값 정의 끝 라인 찾기 (배열/객체 포함) */
@@ -539,6 +622,9 @@ function findHooksInRange(lines, start, end) {
   const allHooks = [...REACT_HOOKS, ...RN_HOOKS, ...STORE_KEYWORDS]
 
   for (let i = start; i <= end && i < lines.length; i++) {
+    // 훅을 정의하는 줄은 사용이 아닙니다 (자기 자신이 목록에 들어가는 것을 막습니다)
+    if (isHookDeclaration(lines[i])) continue
+
     for (const hook of allHooks) {
       if (lines[i].includes(hook + '(')) {
         found.push({ name: hook, category: categorizeHook(hook) })

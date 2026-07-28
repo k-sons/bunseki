@@ -110,6 +110,8 @@ export function analyzeHook(hook, skipNodes) {
     startLine: hook.startLine,
     states: collected.states,
     effects: collected.effects,
+    // 훅이 setter 를 감싸 내보내는 함수(toggle, increment 등)를 따라가는 데 씁니다
+    localFns: collected.localFns,
     returnMap: buildReturnMap(hook.node),
   }
 }
@@ -169,6 +171,7 @@ function readPattern(idNode) {
 export function resolveHookCalls(componentNode, analyzedHooks, skipNodes) {
   const states = []
   const effects = []
+  const localFns = {}
   const outOfScope = new Map()
   const mergedHooks = new Set()
 
@@ -200,15 +203,24 @@ export function resolveHookCalls(componentNode, analyzedHooks, skipNodes) {
       if (!internal) continue
 
       const src = setterOf[internal]
-      if (!src) continue
+      if (src) {
+        states.push({
+          state: src.state,
+          setter: local,          // 컴포넌트에서 실제로 부르는 이름
+          kind: src.kind,
+          line: src.line,         // 선언 위치는 훅 안
+          viaHook: hookName,
+        })
+        continue
+      }
 
-      states.push({
-        state: src.state,
-        setter: local,          // 컴포넌트에서 실제로 부르는 이름
-        kind: src.kind,
-        line: src.line,         // 선언 위치는 훅 안
-        viaHook: hookName,
-      })
+      // setter 가 아니라 setter 를 감싼 함수를 내보내는 경우
+      //   const toggleTheme = () => setTheme(...)
+      //   return { theme, toggleTheme }
+      // 이 함수를 컴포넌트의 로컬 함수처럼 등록해 두면, 핸들러 추적이
+      // 함수 안으로 들어가 setTheme 까지 이어집니다.
+      const fn = analyzed.localFns && analyzed.localFns[internal]
+      if (fn) localFns[local] = fn
     }
 
     if (!mergedHooks.has(hookName)) {
@@ -228,5 +240,5 @@ export function resolveHookCalls(componentNode, analyzedHooks, skipNodes) {
     }
   }, skipNodes ? (node) => node !== componentNode && skipNodes.has(node) : undefined)
 
-  return { states, effects, outOfScope }
+  return { states, effects, localFns, outOfScope }
 }
