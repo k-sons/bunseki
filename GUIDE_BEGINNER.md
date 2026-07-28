@@ -50,17 +50,17 @@
 
 | 배지 색 | 뜻 | 예시 |
 | :--- | :--- | :--- |
-| 🟢 초록 | **State** — 화면이 기억하는 데이터 | `useState`, `useReducer` |
-| 🔵 파랑 | **Effect** — 뒤에서 몰래 일하는 비서 | `useEffect`, `useLayoutEffect` |
 | 🟠 주황 | **Memo** — 계산 결과를 아껴 두기 | `useMemo`, `useCallback` |
+| 🟢 초록 | **State** — 화면이 기억하는 데이터 | `useState`, `useReducer` |
+| 🩵 청록 | **RN** — React Native 전용 | `StyleSheet`, `Animated` |
+| 🔵 파랑 | **Effect** — 뒤에서 몰래 일하는 비서 | `useEffect`, `useLayoutEffect` |
+| 🟦 남보라 | **Async** — 시간이 걸리는 일 | `async`, `await` |
 | 🟣 보라 | **Store** — 앱 전체가 함께 쓰는 데이터 | `useSelector`, `dispatch` |
-| 🟠 주황 | **Handler** — 버튼 클릭·글자 입력 반응 | `onClick`, `onChange` |
-| 🟩 청록 | **RN** — React Native 전용 | `StyleSheet`, `Animated` |
-| ⬜ 기본 | **Async** — 시간이 걸리는 일 | `async`, `await` |
+| 🩷 분홍 | **Handler** — 버튼 클릭·글자 입력 반응 | `onClick`, `onChange` |
 
 > 💡 배지 색만 봐도 "여긴 데이터 기억 구역이구나", "여긴 버튼 반응 구역이구나" 감이 옵니다.
 >
-> ⚠️ **Memo 와 Handler 는 색이 거의 같습니다.** 색 대신 배지에 적힌 글자(`useMemo` vs `onClick`)를 보고 구분하세요. `async` / `await` 배지는 전용 색이 없어 기본 회색으로 나옵니다.
+> 위 표는 **무지개 순서**로 정렬돼 있습니다. 색이 서로 충분히 떨어져 있어서, 한 줄에 배지가 여러 개 붙어도 구별됩니다. 예를 들어 `const handleClick = useCallback(...)` 에는 🩷 **분홍(Handler)** 과 🟠 **주황(Memo)** 이 나란히 붙습니다.
 
 ---
 

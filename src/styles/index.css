@@ -30,15 +30,22 @@
   --band-component: hsla(280, 70%, 65%, 0.08);
   --band-export: hsla(15, 80%, 60%, 0.08);
 
-  /* Badge Colors */
+  /* Badge Colors
+   *
+   * 배지는 한 줄에 여러 개가 나란히 붙으므로 색상환에서 서로 떨어뜨립니다.
+   * 특히 handler 와 memo 는 `const handleX = useCallback(...)` 처럼
+   * 같은 줄에 공존하는 일이 잦아 반드시 구분돼야 합니다.
+   *
+   *   memo 35 · state 150 · rn 175 · effect 220 · async 255 · store 280 · handler 330
+   */
   --badge-hook-state: hsl(150, 75%, 45%);
   --badge-hook-effect: hsl(220, 85%, 65%);
   --badge-hook-memo: hsl(35, 90%, 55%);
   --badge-hook-store: hsl(280, 70%, 65%);
-  --badge-handler: hsl(35, 90%, 60%);
-  --badge-component: hsl(280, 70%, 65%);
-  --badge-rn: hsl(160, 70%, 50%);
-  --badge-import: hsl(200, 70%, 60%);
+  --badge-handler: hsl(330, 75%, 65%);
+  --badge-rn: hsl(175, 65%, 45%);
+  --badge-async: hsl(255, 75%, 72%);
+  --badge-import: hsl(210, 15%, 62%);
 }
 
 /* Dark Theme (default) */
@@ -757,16 +764,22 @@ body {
   color: hsl(220, 10%, 65%);
 }
 .hl-badge--handler {
-  background: hsla(35, 90%, 60%, 0.15);
+  background: hsla(330, 75%, 65%, 0.15);
   color: var(--badge-handler);
 }
-.hl-badge--component {
-  background: hsla(280, 70%, 65%, 0.15);
-  color: var(--badge-component);
-}
 .hl-badge--rn {
-  background: hsla(160, 70%, 50%, 0.15);
+  background: hsla(175, 65%, 45%, 0.15);
   color: var(--badge-rn);
+}
+/* highlighter.js 가 async / await 키워드에 붙입니다 */
+.hl-badge--async {
+  background: hsla(255, 75%, 72%, 0.15);
+  color: var(--badge-async);
+}
+/* structure.js 가 React 패키지 import 에 붙입니다 (RN 은 위의 --rn) */
+.hl-badge--hook {
+  background: hsla(210, 15%, 62%, 0.15);
+  color: var(--badge-import);
 }
 
 /* Comment highlight */
