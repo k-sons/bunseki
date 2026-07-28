@@ -147,6 +147,15 @@
           </svg>
           플로우
         </button>
+        <button role="tab" class="tab" data-tab="behavior" aria-selected="false" id="tab-behavior">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M7 1v4M7 9v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            <path d="M4.5 3.5L7 1l2.5 2.5M4.5 10.5L7 13l2.5-2.5" stroke="currentColor" stroke-width="1.5"
+              stroke-linecap="round" stroke-linejoin="round" />
+            <circle cx="7" cy="7" r="2" fill="currentColor" />
+          </svg>
+          동작
+        </button>
         <div class="tab-indicator" id="tab-indicator"></div>
       </nav>
 
@@ -175,6 +184,11 @@
         <div role="tabpanel" id="panel-flow" class="tab-panel" aria-labelledby="tab-flow" hidden>
           <div class="placeholder-msg">
             <p>분석 결과가 여기에 표시됩니다</p>
+          </div>
+        </div>
+        <div role="tabpanel" id="panel-behavior" class="tab-panel" aria-labelledby="tab-behavior" hidden>
+          <div class="placeholder-msg">
+            <p>이벤트를 눌렀을 때 무슨 일이 일어나는지 보여줍니다</p>
           </div>
         </div>
       </div>
