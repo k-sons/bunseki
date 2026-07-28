@@ -1,0 +1,86 @@
+/**
+ * Behavior Analysis — 진입점
+ *
+ * 코드가 "무엇으로 이루어졌는가"(기존 parser.js)가 아니라
+ * "어떻게 동작하는가"를 분석합니다.
+ *
+ * 이 모듈만 @babel/parser 를 import 하므로, main.js 에서 동적 import 하면
+ * 파서가 별도 청크로 분리되어 초기 로딩에 포함되지 않습니다.
+ */
+
+import { parse } from '@babel/parser'
+import { findComponents, collectComponent } from './collect.js'
+import { buildEvents, describeEffects } from './chain.js'
+
+/**
+ * @typedef {Object} Step
+ * @property {'event'|'setter'|'effect'|'call'|'rerender'} kind
+ * @property {string} label
+ * @property {string} [detail]
+ * @property {string} [note]
+ * @property {number|null} line
+ * @property {string[]} badges
+ */
+
+/**
+ * @typedef {Object} BehaviorResult
+ * @property {ComponentBehavior[]} components
+ * @property {{message: string, line: number|null}|null} error
+ */
+
+const PARSE_OPTIONS = {
+  sourceType: 'module',
+  errorRecovery: true,
+  plugins: ['jsx', 'typescript', 'decorators-legacy', 'classProperties'],
+}
+
+/**
+ * 코드의 동작 연쇄를 분석합니다.
+ * @param {string} code
+ * @returns {BehaviorResult}
+ */
+export function parseBehavior(code) {
+  let ast
+  try {
+    ast = parse(code, PARSE_OPTIONS)
+  } catch (err) {
+    return {
+      components: [],
+      error: {
+        message: translateParseError(err),
+        line: err.loc ? err.loc.line : null,
+      },
+    }
+  }
+
+  const components = findComponents(ast).map(comp => {
+    const collected = collectComponent(comp)
+    return {
+      name: comp.name,
+      startLine: comp.startLine,
+      states: collected.states,
+      effects: describeEffects(collected.effects),
+      events: buildEvents(comp.name, collected),
+    }
+  })
+
+  return { components, error: null }
+}
+
+/**
+ * Babel 오류 메시지를 읽기 쉽게 바꿉니다.
+ * 알려진 것만 번역하고, 나머지는 원문을 그대로 보여줍니다.
+ */
+function translateParseError(err) {
+  const raw = String(err.message || '').replace(/\s*\(\d+:\d+\)\s*$/, '')
+
+  const known = {
+    UnterminatedJsxContent: 'JSX 태그가 닫히지 않았습니다. 코드가 중간에 잘렸는지 확인해 주세요.',
+    UnexpectedToken: '예상하지 못한 토큰이 있습니다.',
+    UnterminatedString: '문자열이 닫히지 않았습니다.',
+    UnterminatedComment: '주석이 닫히지 않았습니다.',
+    MissingSemicolon: '구문이 올바르게 끝나지 않았습니다.',
+  }
+
+  return known[err.reasonCode] || raw
+}

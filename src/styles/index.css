@@ -1138,6 +1138,257 @@ body {
   color: var(--text-primary);
 }
 
+/* ===== Behavior View — 동작 연쇄 ===== */
+.behavior-view {
+  padding: 16px;
+}
+
+/* --- 상단 이벤트 선택 --- */
+.behavior-picker {
+  padding-bottom: 14px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.behavior-comp {
+  margin-bottom: 12px;
+}
+
+.behavior-comp:last-child {
+  margin-bottom: 0;
+}
+
+.behavior-comp__name {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 7px;
+}
+
+.behavior-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.behavior-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 5px 10px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.behavior-chip:hover {
+  color: var(--text-primary);
+  border-color: hsl(280, 50%, 50%);
+}
+
+.behavior-chip.active {
+  color: #fff;
+  background: hsl(280, 60%, 45%);
+  border-color: hsl(280, 70%, 60%);
+}
+
+.behavior-chip__el {
+  opacity: 0.75;
+}
+
+.behavior-chip__ev {
+  font-weight: 600;
+}
+
+.behavior-chip__line {
+  font-size: 0.65rem;
+  opacity: 0.55;
+}
+
+/* --- 세로 스텝 --- */
+.behavior-flow__label {
+  font-size: 0.68rem;
+  color: var(--text-tertiary);
+  margin: 16px 0 8px;
+  padding-left: 2px;
+}
+
+.behavior-flow {
+  display: flex;
+  flex-direction: column;
+}
+
+.behavior-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--text-tertiary);
+  border-radius: var(--radius-sm);
+}
+
+.behavior-step.is-clickable {
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.behavior-step.is-clickable:hover {
+  border-color: hsl(280, 50%, 50%);
+}
+
+.behavior-step--event {
+  border-left-color: hsl(200, 80%, 55%);
+}
+
+.behavior-step--setter {
+  border-left-color: hsl(280, 70%, 60%);
+}
+
+.behavior-step--effect {
+  border-left-color: hsl(45, 85%, 55%);
+}
+
+.behavior-step--call {
+  border-left-color: hsl(160, 60%, 45%);
+}
+
+.behavior-step--rerender {
+  border-left-color: hsl(0, 0%, 50%);
+}
+
+.behavior-step__num {
+  flex-shrink: 0;
+  width: 19px;
+  height: 19px;
+  display: grid;
+  place-items: center;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  background: var(--bg-base, transparent);
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+}
+
+.behavior-step__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.behavior-step__kind {
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  color: var(--text-tertiary);
+}
+
+.behavior-step__label {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.behavior-step__detail {
+  color: hsl(280, 60%, 68%);
+  font-size: 0.76rem;
+}
+
+.behavior-step__badge {
+  font-size: 0.58rem;
+  background: hsla(200, 80%, 55%, 0.15);
+  color: hsl(200, 80%, 65%);
+}
+
+.behavior-step__line {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--text-tertiary);
+}
+
+/* --- 스텝 사이 연결선 --- */
+.behavior-connector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0 3px 21px;
+  min-height: 22px;
+}
+
+.behavior-connector__arrow {
+  color: var(--text-tertiary);
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.behavior-connector__note {
+  font-size: 0.66rem;
+  color: var(--text-tertiary);
+}
+
+/* --- 오류 --- */
+.behavior-error {
+  padding: 18px;
+  background: hsla(0, 70%, 50%, 0.06);
+  border: 1px solid hsla(0, 70%, 55%, 0.25);
+  border-radius: var(--radius-sm);
+}
+
+.behavior-error__title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: hsl(0, 75%, 65%);
+  margin-bottom: 8px;
+}
+
+.behavior-error__msg {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.behavior-error__line {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  margin-bottom: 10px;
+}
+
+.behavior-error__hint {
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.behavior-summary .behavior-step {
+  margin-bottom: 6px;
+}
+
+[data-theme="light"] .behavior-step__detail {
+  color: hsl(280, 60%, 45%);
+}
+
+[data-theme="light"] .behavior-chip.active {
+  background: hsl(280, 60%, 50%);
+}
+
 /* Prism token overrides for light theme */
 [data-theme="light"] .token.comment { color: hsl(120, 30%, 45%); }
 [data-theme="light"] .token.keyword { color: hsl(280, 70%, 50%); }

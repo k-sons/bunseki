@@ -26,6 +26,7 @@ const panelHighlight = document.getElementById('panel-highlight')
 const panelStructure = document.getElementById('panel-structure')
 const panelMetrics = document.getElementById('panel-metrics')
 const panelFlow = document.getElementById('panel-flow')
+const panelBehavior = document.getElementById('panel-behavior')
 
 const statusLines = document.getElementById('status-lines')
 const statusFunctions = document.getElementById('status-functions')
@@ -143,9 +144,46 @@ function analyze() {
 
     // Switch to highlight tab
     activateTab('highlight')
+
+    // Render Behavior View (동작 분석은 별도 청크라 비동기로 붙입니다)
+    analyzeBehavior(code)
   } catch (err) {
     console.error('Analysis error:', err)
     alert('코드 분석 중 오류가 발생했습니다: ' + err.message)
+  }
+}
+
+/**
+ * 동작 분석은 @babel/parser 를 쓰기 때문에 번들이 큽니다.
+ * 첫 분석 때 동적 import 로 불러와 초기 로딩에서 제외합니다.
+ * 여기서 실패해도 나머지 탭은 그대로 동작해야 하므로 예외를 가둡니다.
+ */
+async function analyzeBehavior(code) {
+  panelBehavior.innerHTML = '<div class="placeholder-msg"><p>동작을 분석하는 중…</p></div>'
+
+  try {
+    const [{ parseBehavior }, { renderBehaviorView }] = await Promise.all([
+      import('./core/behavior/index.js'),
+      import('./ui/behavior.js'),
+    ])
+
+    const behavior = parseBehavior(code)
+    const view = renderBehaviorView(behavior, (lineNum) => {
+      activateTab('highlight')
+      if (highlightContainer) {
+        scrollToLine(highlightContainer, lineNum)
+      }
+    })
+
+    panelBehavior.innerHTML = ''
+    panelBehavior.appendChild(view)
+  } catch (err) {
+    console.error('Behavior analysis error:', err)
+    panelBehavior.innerHTML = `
+      <div class="placeholder-msg">
+        <p>동작 분석을 불러오지 못했습니다</p>
+        <span class="placeholder-shortcut">${err.message}</span>
+      </div>`
   }
 }
 
@@ -240,6 +278,7 @@ function clearCode() {
   panelStructure.innerHTML = `<div class="placeholder-msg"><p>분석 결과가 여기에 표시됩니다</p></div>`
   panelMetrics.innerHTML = `<div class="placeholder-msg"><p>분석 결과가 여기에 표시됩니다</p></div>`
   panelFlow.innerHTML = `<div class="placeholder-msg"><p>분석 결과가 여기에 표시됩니다</p></div>`
+  panelBehavior.innerHTML = `<div class="placeholder-msg"><p>이벤트를 눌렀을 때 무슨 일이 일어나는지 보여줍니다</p></div>`
 
   statusLines.textContent = '줄: 0'
   statusFunctions.textContent = '함수: 0'
