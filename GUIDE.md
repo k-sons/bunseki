@@ -7,7 +7,7 @@
 
 ## 📚 맞춤 가이드 문서 안내
 
-### 1. 🐣 [왕초보용 100% 입문 가이드 (GUIDE_BEGINNER.md)](file:///d:/code_bunseki/GUIDE_BEGINNER.md)
+### 1. 🐣 [왕초보용 100% 입문 가이드 (GUIDE_BEGINNER.md)](./GUIDE_BEGINNER.md)
 **대상**: React / React Native 입문자, 코딩 초보자, 쉬운 설명이 필요한 분
 - **주요 내용**:
   - 알록달록 색상 배지로 1초 만에 코드 구획 읽기 (레고 비유)
@@ -19,7 +19,7 @@
 
 ---
 
-### 2. 📘 [개발자/실무자용 메트릭 & 아키텍처 가이드 (GUIDE_PRO.md)](file:///d:/code_bunseki/GUIDE_PRO.md)
+### 2. 📘 [개발자/실무자용 메트릭 & 아키텍처 가이드 (GUIDE_PRO.md)](./GUIDE_PRO.md)
 **대상**: 현업 프론트엔드 개발자, 코드 리뷰어, 아키텍처 개선 검토자
 - **주요 내용**:
   - 정규식 & 뎁스 트래킹 라인 파서 엔진(`src/core/parser.js`) 구조 및 작동 원리
