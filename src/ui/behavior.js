@@ -12,6 +12,7 @@ const STEP_KIND_LABEL = {
   setter: '상태 변경',
   effect: 'Effect 실행',
   rerender: '화면 갱신',
+  boundary: '여기서부터 범위 밖',
 }
 
 /**
@@ -180,11 +181,17 @@ function renderStep(step, num, onNavigate) {
     ? `<span class="behavior-step__line">L${step.line}</span>`
     : ''
 
+  // 경계 스텝은 이유를 함께 보여줘야 "도구가 못 찾은 것"과 구분됩니다
+  const note = step.kind === 'boundary' && step.note
+    ? `<span class="behavior-step__hint">${step.note}</span>`
+    : ''
+
   el.innerHTML = `
-    <span class="behavior-step__num">${num}</span>
+    <span class="behavior-step__num">${step.kind === 'boundary' ? '·' : num}</span>
     <span class="behavior-step__body">
       <span class="behavior-step__kind">${STEP_KIND_LABEL[step.kind] || step.kind}</span>
       <span class="behavior-step__label">${step.label}${detail}${badges}</span>
+      ${note}
     </span>
     ${lineTag}
   `

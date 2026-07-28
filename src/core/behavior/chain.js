@@ -20,24 +20,38 @@ const MAX_EFFECT_DEPTH = 3
  * 컴포넌트 하나의 이벤트별 동작 연쇄를 만듭니다.
  * @returns {object[]} EventEntry[]
  */
-export function buildEvents(compName, collected) {
+export function buildEvents(compName, collected, scope = {}) {
   const { states, effects, localFns, handlers } = collected
+  const { propNames = new Set(), outOfScope = new Map() } = scope
 
   const setterNames = states.map(s => s.setter).filter(Boolean)
   const setterToState = {}
   const setterKind = {}
+  const setterVia = {}
   for (const s of states) {
     if (!s.setter) continue
     setterToState[s.setter] = s.state
     setterKind[s.setter] = s.kind || 'state'
+    setterVia[s.setter] = s.viaHook || null
   }
 
   return handlers.map(handler => {
     const { setters, viaFns } = resolveHandlerSetters(handler, localFns, setterNames)
 
     const flows = setters.map(setter =>
-      buildFlow({ handler, setter, viaFns, setterToState, setterKind, effects, setterNames })
+      buildFlow({
+        handler, setter, viaFns,
+        setterToState, setterKind, setterVia,
+        effects, setterNames,
+      })
     )
+
+    // 상태를 바꾸지 않는 것처럼 보일 때, 진짜 안 바꾸는 것인지
+    // 붙여넣은 코드 밖으로 이어지는 것인지 구분해 줍니다.
+    if (flows.length === 0) {
+      const boundary = detectBoundary(handler, localFns, setterNames, propNames, outOfScope)
+      if (boundary) flows.push(boundary)
+    }
 
     return {
       id: `${compName}:${handler.element}:${handler.event}:${handler.line}`,
@@ -47,6 +61,63 @@ export function buildEvents(compName, collected) {
       flows,
     }
   })
+}
+
+/**
+ * 흐름이 붙여넣은 코드 밖으로 나가는 지점을 찾습니다.
+ *
+ * 두 경우를 구분합니다:
+ *   - prop 으로 받은 콜백   → 이 컴포넌트를 쓰는 쪽(부모)에 있음
+ *   - import 한 훅에서 온 것 → 다른 파일에 있음
+ *
+ * 둘 다 아니면 정말로 상태를 바꾸지 않는 핸들러입니다.
+ */
+function detectBoundary(handler, localFns, setterNames, propNames, outOfScope) {
+  // 핸들러가 참조하는 이름들을 모읍니다
+  const referenced = []
+  if (handler.expr.type === 'Identifier') {
+    referenced.push(handler.expr.name)
+  } else {
+    findDirectCalls(handler.expr, setterNames).forEach(n => referenced.push(n))
+  }
+
+  for (const name of referenced) {
+    if (localFns[name]) continue // 이 파일 안에 있음 — 경계 아님
+
+    if (outOfScope.has(name)) {
+      return {
+        steps: [
+          { kind: 'event', label: `<${handler.element} ${handler.event}>`, line: handler.line, badges: [] },
+          {
+            kind: 'boundary',
+            label: `${name}`,
+            detail: `${outOfScope.get(name)} 에서 받아옴`,
+            note: '이 훅은 다른 파일에 있어 여기서부터는 따라갈 수 없습니다',
+            line: null,
+            badges: [],
+          },
+        ],
+      }
+    }
+
+    if (propNames.has(name)) {
+      return {
+        steps: [
+          { kind: 'event', label: `<${handler.element} ${handler.event}>`, line: handler.line, badges: [] },
+          {
+            kind: 'boundary',
+            label: `${name}`,
+            detail: 'prop 으로 전달받은 함수',
+            note: '이 컴포넌트를 사용하는 쪽에 있습니다. 부모 코드도 함께 붙여넣으면 이어서 볼 수 있습니다',
+            line: null,
+            badges: [],
+          },
+        ],
+      }
+    }
+  }
+
+  return null
 }
 
 /**
@@ -95,7 +166,7 @@ function resolveHandlerSetters(handler, localFns, setterNames) {
 /**
  * setter 하나에서 시작하는 흐름을 Step 배열로 평탄화합니다.
  */
-function buildFlow({ handler, setter, viaFns, setterToState, setterKind, effects, setterNames }) {
+function buildFlow({ handler, setter, viaFns, setterToState, setterKind, setterVia, effects, setterNames }) {
   const steps = []
 
   steps.push({
@@ -117,14 +188,19 @@ function buildFlow({ handler, setter, viaFns, setterToState, setterKind, effects
 
   const state = setterToState[setter]
   const kind = setterKind ? setterKind[setter] : 'state'
+  const viaHook = setterVia ? setterVia[setter] : null
+
+  let note
+  if (viaHook) note = `${viaHook} 훅이 관리하는 상태입니다`
+  else if (kind === 'reducer') note = 'useReducer 로 관리되는 상태입니다'
 
   steps.push({
     kind: 'setter',
     label: `${setter}()`,
     detail: state ? `→  ${state}` : null,
-    note: kind === 'reducer' ? 'useReducer 로 관리되는 상태입니다' : undefined,
+    note,
     line: handler.line,
-    badges: [],
+    badges: viaHook ? [viaHook] : [],
   })
 
   // 외부 스토어(Redux)는 바뀌는 대상이 이 컴포넌트 밖이라 Effect 연결을 따지지 않습니다

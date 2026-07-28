@@ -1277,6 +1277,21 @@ body {
   border-left-color: hsl(0, 0%, 50%);
 }
 
+/* 붙여넣은 코드 밖으로 이어지는 지점 — 점선으로 "여기서 끊김"을 드러냅니다 */
+.behavior-step--boundary {
+  border-style: dashed;
+  border-left-style: solid;
+  border-left-color: hsl(30, 80%, 55%);
+  background: hsla(30, 80%, 55%, 0.05);
+}
+
+.behavior-step__hint {
+  font-size: 0.68rem;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
 .behavior-step__num {
   flex-shrink: 0;
   width: 19px;

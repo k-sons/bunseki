@@ -10,6 +10,7 @@
 
 import { parse } from '@babel/parser'
 import { findComponents, collectComponent } from './collect.js'
+import { findCustomHooks, analyzeHook, resolveHookCalls, getPropNames } from './hooks.js'
 import { buildEvents, describeEffects } from './chain.js'
 
 /**
@@ -59,15 +60,35 @@ export function parseBehavior(code) {
   // 수집할 때 다른 컴포넌트의 영역은 건너뜁니다.
   const componentNodes = new Set(found.map(c => c.node))
 
+  // 같은 파일 안에 선언된 커스텀 훅을 먼저 분석해 둡니다.
+  const analyzedHooks = new Map()
+  for (const [name, hook] of findCustomHooks(ast)) {
+    analyzedHooks.set(name, analyzeHook(hook, componentNodes))
+  }
+
   const components = found.map(comp => {
     const collected = collectComponent(comp, componentNodes)
+    const hookUsage = resolveHookCalls(comp.node, analyzedHooks, componentNodes)
+
+    // 훅이 관리하는 상태·Effect 를 컴포넌트 것으로 끌어옵니다
+    const merged = {
+      ...collected,
+      states: [...collected.states, ...hookUsage.states],
+      effects: [...collected.effects, ...hookUsage.effects],
+    }
+
+    const scope = {
+      propNames: getPropNames(comp.node),
+      outOfScope: hookUsage.outOfScope,
+    }
+
     return {
       name: comp.name,
       startLine: comp.startLine,
       parent: comp.parent,
-      states: collected.states,
-      effects: describeEffects(collected.effects),
-      events: buildEvents(comp.name, collected),
+      states: merged.states,
+      effects: describeEffects(merged.effects),
+      events: buildEvents(comp.name, merged, scope),
     }
   })
 
