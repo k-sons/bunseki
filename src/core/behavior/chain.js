@@ -25,13 +25,18 @@ export function buildEvents(compName, collected) {
 
   const setterNames = states.map(s => s.setter).filter(Boolean)
   const setterToState = {}
-  for (const s of states) if (s.setter) setterToState[s.setter] = s.state
+  const setterKind = {}
+  for (const s of states) {
+    if (!s.setter) continue
+    setterToState[s.setter] = s.state
+    setterKind[s.setter] = s.kind || 'state'
+  }
 
   return handlers.map(handler => {
     const { setters, viaFns } = resolveHandlerSetters(handler, localFns, setterNames)
 
     const flows = setters.map(setter =>
-      buildFlow({ handler, setter, viaFns, setterToState, effects, setterNames })
+      buildFlow({ handler, setter, viaFns, setterToState, setterKind, effects, setterNames })
     )
 
     return {
@@ -72,7 +77,13 @@ function resolveHandlerSetters(handler, localFns, setterNames) {
   }
 
   if (handler.expr.type === 'Identifier') {
-    follow(handler.expr.name, 0)
+    // onChange={setQuery} — setter 를 그대로 넘기면 호출식이 아니라
+    // findSetterUsage 로는 잡히지 않습니다. 여기서 직접 처리합니다.
+    if (setterNames.includes(handler.expr.name)) {
+      setters.add(handler.expr.name)
+    } else {
+      follow(handler.expr.name, 0)
+    }
   } else {
     // 인라인 화살표 안에서 로컬 함수를 부르는 경우
     findDirectCalls(handler.expr, setterNames).forEach(name => follow(name, 0))
@@ -84,7 +95,7 @@ function resolveHandlerSetters(handler, localFns, setterNames) {
 /**
  * setter 하나에서 시작하는 흐름을 Step 배열로 평탄화합니다.
  */
-function buildFlow({ handler, setter, viaFns, setterToState, effects, setterNames }) {
+function buildFlow({ handler, setter, viaFns, setterToState, setterKind, effects, setterNames }) {
   const steps = []
 
   steps.push({
@@ -105,13 +116,28 @@ function buildFlow({ handler, setter, viaFns, setterToState, effects, setterName
   })
 
   const state = setterToState[setter]
+  const kind = setterKind ? setterKind[setter] : 'state'
+
   steps.push({
     kind: 'setter',
     label: `${setter}()`,
     detail: state ? `→  ${state}` : null,
+    note: kind === 'reducer' ? 'useReducer 로 관리되는 상태입니다' : undefined,
     line: handler.line,
     badges: [],
   })
+
+  // 외부 스토어(Redux)는 바뀌는 대상이 이 컴포넌트 밖이라 Effect 연결을 따지지 않습니다
+  if (kind === 'store') {
+    steps.push({
+      kind: 'rerender',
+      label: '리렌더',
+      detail: '외부 스토어가 바뀌어, 구독 중인 컴포넌트들이 다시 그려집니다',
+      line: null,
+      badges: [],
+    })
+    return { steps }
+  }
 
   appendEffectSteps({ steps, state, effects, setterToState, setterNames, depth: 0, visited: new Set() })
 

@@ -214,10 +214,16 @@ function renderStateSummary(components, onNavigate) {
     comp.states.forEach(s => {
       const row = document.createElement('div')
       row.className = 'behavior-step behavior-step--setter is-clickable'
+
+      const kindLabel = s.kind === 'store' ? '외부 스토어'
+        : s.kind === 'reducer' ? '상태 (useReducer)'
+        : '상태'
+      const target = s.state || 'Redux 스토어'
+
       row.innerHTML = `
         <span class="behavior-step__body">
-          <span class="behavior-step__kind">상태</span>
-          <span class="behavior-step__label">${s.state}<span class="behavior-step__detail">← ${s.setter || '?'}</span></span>
+          <span class="behavior-step__kind">${kindLabel}</span>
+          <span class="behavior-step__label">${target}<span class="behavior-step__detail">← ${s.setter || '?'}</span></span>
         </span>
         <span class="behavior-step__line">L${s.line}</span>
       `

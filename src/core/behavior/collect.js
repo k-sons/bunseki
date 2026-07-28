@@ -80,6 +80,31 @@ const isFunctionNode = (n) =>
         n.type === 'FunctionDeclaration')
 
 /**
+ * 함수를 감싸는 흔한 래퍼들.
+ * memo(Comp), forwardRef(fn), useCallback(fn, deps) 처럼 감싸 두면
+ * 선언의 init 이 CallExpression 이라 함수로 보이지 않습니다.
+ */
+const FN_WRAPPERS = ['memo', 'forwardRef', 'useCallback', 'observer']
+
+/**
+ * 래퍼를 벗겨 실제 함수 노드를 꺼냅니다.
+ * memo(forwardRef(fn)) 처럼 겹쳐 있어도 따라 들어갑니다.
+ * @returns {object|null}
+ */
+function unwrapFunction(node, depth = 0) {
+  if (!node || depth > 3) return null
+  if (isFunctionNode(node)) return node
+
+  if (node.type === 'CallExpression') {
+    const name = calleeName(node)
+    if (FN_WRAPPERS.includes(name)) {
+      return unwrapFunction(node.arguments[0], depth + 1)
+    }
+  }
+  return null
+}
+
+/**
  * React 컴포넌트로 보이는 함수를 찾습니다.
  *
  * 최상위 선언은 "대문자로 시작하는 이름"만으로 판별합니다 (기존 파서와 동일).
@@ -107,9 +132,10 @@ export function findComponents(ast) {
       add(target.id.name, target, target)
     } else if (target.type === 'VariableDeclaration') {
       for (const d of target.declarations) {
-        if (d.id && d.id.type === 'Identifier' && isFunctionNode(d.init)) {
-          add(d.id.name, d.init, d)
-        }
+        if (!d.id || d.id.type !== 'Identifier') continue
+        // memo(...) / forwardRef(...) 로 감싼 컴포넌트도 잡습니다
+        const fn = unwrapFunction(d.init)
+        if (fn) add(d.id.name, fn, d)
       }
     }
   }
@@ -128,10 +154,13 @@ export function findComponents(ast) {
         name = n.id.name
         fnNode = n
         declNode = n
-      } else if (n.type === 'VariableDeclarator' && n.id && n.id.type === 'Identifier' && isFunctionNode(n.init)) {
-        name = n.id.name
-        fnNode = n.init
-        declNode = n
+      } else if (n.type === 'VariableDeclarator' && n.id && n.id.type === 'Identifier') {
+        const unwrapped = unwrapFunction(n.init)
+        if (unwrapped) {
+          name = n.id.name
+          fnNode = unwrapped
+          declNode = n
+        }
       }
 
       if (!name || !/^[A-Z]/.test(name)) return
@@ -165,23 +194,50 @@ export function collectComponent(comp, componentNodes) {
   }
 }
 
-/** `const [open, setOpen] = useState(...)` 에서 상태 ↔ setter 결합을 뽑습니다 */
+/**
+ * 상태를 바꾸는 수단과 그 대상을 짝지어 수집합니다.
+ *
+ *   const [open, setOpen] = useState(false)     → open        ← setOpen
+ *   const [list, dispatch] = useReducer(r, [])  → list        ← dispatch
+ *   const dispatch = useDispatch()              → 외부 스토어  ← dispatch
+ *
+ * 마지막 경우는 바뀌는 대상이 이 컴포넌트 밖에 있어 state 를 null 로 둡니다.
+ */
+const STATE_HOOKS = { useState: 'state', useReducer: 'reducer' }
+
 function collectStates(root, skip) {
   const states = []
+
   walk(root, (n) => {
     if (n.type !== 'VariableDeclarator') return
-    if (calleeName(n.init) !== 'useState') return
-    if (!n.id || n.id.type !== 'ArrayPattern') return
+    const hook = calleeName(n.init)
+    if (!hook) return
 
-    const [stateEl, setterEl] = n.id.elements
-    if (!stateEl || stateEl.type !== 'Identifier') return
+    // useState / useReducer — [값, 바꾸는함수] 형태
+    if (STATE_HOOKS[hook] && n.id && n.id.type === 'ArrayPattern') {
+      const [stateEl, setterEl] = n.id.elements
+      if (!stateEl || stateEl.type !== 'Identifier') return
 
-    states.push({
-      state: stateEl.name,
-      setter: setterEl && setterEl.type === 'Identifier' ? setterEl.name : null,
-      line: lineOf(n),
-    })
+      states.push({
+        state: stateEl.name,
+        setter: setterEl && setterEl.type === 'Identifier' ? setterEl.name : null,
+        kind: STATE_HOOKS[hook],
+        line: lineOf(n),
+      })
+      return
+    }
+
+    // Redux useDispatch — 바뀌는 대상이 컴포넌트 밖에 있습니다
+    if (hook === 'useDispatch' && n.id && n.id.type === 'Identifier') {
+      states.push({
+        state: null,
+        setter: n.id.name,
+        kind: 'store',
+        line: lineOf(n),
+      })
+    }
   }, skip)
+
   return states
 }
 
@@ -215,8 +271,10 @@ function collectEffects(root, skip) {
 function collectLocalFunctions(root, skip) {
   const fns = {}
   walk(root, (n) => {
-    if (n.type === 'VariableDeclarator' && n.id && n.id.type === 'Identifier' && isFunctionNode(n.init)) {
-      fns[n.id.name] = { node: n.init, line: lineOf(n) }
+    if (n.type === 'VariableDeclarator' && n.id && n.id.type === 'Identifier') {
+      // useCallback(fn, deps) 으로 감싼 핸들러가 흔합니다
+      const fn = unwrapFunction(n.init)
+      if (fn) fns[n.id.name] = { node: fn, line: lineOf(n) }
     }
     if (n.type === 'FunctionDeclaration' && n.id) {
       fns[n.id.name] = { node: n, line: lineOf(n) }
