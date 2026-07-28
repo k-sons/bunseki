@@ -1,3 +1,6 @@
+/* Prism 구문강조 테마 — 아래 [data-theme="light"] 토큰 오버라이드보다 먼저 와야 함 */
+@import 'prismjs/themes/prism-tomorrow.css';
+
 /* ===== Code Bunseki — Design System ===== */
 
 /* --- CSS Variables / Tokens --- */

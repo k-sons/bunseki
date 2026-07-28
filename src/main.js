@@ -330,18 +330,6 @@ function generateMarkdown(analysis) {
   return md
 }
 
-// ===== Analyze Button =====
-btnAnalyze.addEventListener('click', analyze)
-
-// ===== Language Select =====
-selectLang.addEventListener('change', () => {
-  updateQuickStatus()
-  // Re-analyze if already analyzed
-  if (currentAnalysis && codeInput.value.trim()) {
-    analyze()
-  }
-})
-
 // ===== Panel Resizer =====
 let isResizing = false
 
