@@ -1290,6 +1290,19 @@ body {
   border-left-color: hsl(0, 0%, 50%);
 }
 
+/* 되돌아 나갈 수 있는 자리 — ⏱ 타임라인의 관문 알약과 같은 색·같은 끊긴 테두리.
+   위의 Effect 와 한 짝이라 색은 같게 두고, 실선/점선으로만 갈라 놓습니다. */
+.behavior-step--gate {
+  border-style: dashed;
+  border-left-style: dashed;
+  border-left-color: hsl(45, 80%, 55%);
+  background: hsla(45, 80%, 55%, 0.04);
+}
+
+.behavior-step--gate .behavior-step__num {
+  color: hsl(45, 80%, 68%);
+}
+
 /* 붙여넣은 코드 밖으로 이어지는 지점 — 점선으로 "여기서 끊김"을 드러냅니다 */
 .behavior-step--boundary {
   border-style: dashed;

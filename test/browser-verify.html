@@ -72,6 +72,21 @@ try {
           (s.querySelector('.behavior-step__label')?.textContent || '').replace(/\s+/g, ' ').trim())
     log(`  event ${i + 1}: ` + steps.join('  →  '))
   })
+  // 연쇄의 관문 — 번호를 먹지 않고(↩), 설명은 알약 안에만(화살표에 중복 금지)
+  const gateRow = [...be.querySelectorAll('.behavior-detail .behavior-step--gate')][0]
+  if (gateRow) {
+    const nums = [...be.querySelectorAll('.behavior-detail .behavior-step__num')]
+      .map(n => n.textContent.trim())
+    const connNotes = [...be.querySelectorAll('.behavior-detail .behavior-connector__note')]
+      .map(n => n.textContent.trim())
+    log('연쇄 관문: 표시 "' + gateRow.querySelector('.behavior-step__num').textContent.trim() +
+      '" / 설명 "' + (gateRow.querySelector('.behavior-step__hint')?.textContent.trim() || '없음') + '"')
+    log('  스텝 번호: ' + nums.join(' ') + '  (번호가 안 건너뛰어야 함)')
+    log('  화살표에 관문 설명 중복: ' +
+      connNotes.filter(t => t.includes('아래 단계는')).length + '건 (0 이어야 함)')
+  } else {
+    log('연쇄 관문: 없음 (있어야 함!)')
+  }
   // ⏱ 타이밍 · deps 점검 — 트랙 머리말/경고가 실제로 그려지는지 봅니다
   const staleCode = `import { useState, useEffect } from 'react'
 

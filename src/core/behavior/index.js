@@ -98,7 +98,7 @@ export function parseBehavior(code) {
       effects: describeEffects(merged.effects),
       timing,
       interplay: analyzeInterplay(timing),
-      events: buildEvents(comp.name, merged, scope),
+      events: buildEvents(comp.name, merged, scope, code),
     }
   })
 

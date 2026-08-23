@@ -283,7 +283,7 @@ const GATE_MAX_DEPTH = 1
 /**
  * @returns {Array<{line:number|null, stop:'return'|'throw', cond:string}>}
  */
-function findGates(effectBody, code) {
+export function findGates(effectBody, code) {
   const gates = []
   const seen = new Set()
 
@@ -318,6 +318,18 @@ function findGates(effectBody, code) {
 
   scan(effectBody, 0)
   return gates
+}
+
+/**
+ * 관문 하나를 스텝의 재료로 바꿉니다.
+ * ⏱ 타임라인과 ⚡ 이벤트 연쇄가 **같은 문장**을 쓰도록 여기 한 곳에 둡니다.
+ */
+export function describeGate(g) {
+  return {
+    label: `${g.cond} 면 ${g.stop === 'throw' ? '오류' : '중단'}`,
+    note: '이 조건이 참이면 아래 단계는 실행되지 않습니다',
+    line: g.line,
+  }
 }
 
 /** `if (…) return` 인가 `if (…) throw` 인가 */
@@ -426,12 +438,7 @@ function buildTimeline({ effect, isAsync, asyncKind, immediate, deferred, hasCle
   // 응답을 기다리기 전 구간 — 관문(gate)과 곧바로 부르는 setter 가 섞여 있습니다.
   // 코드에 적힌 차례대로 보여야 "무엇 앞에서 멈추는지" 가 맞으므로 줄 번호로 세웁니다.
   const before = [
-    ...gates.map(g => ({
-      kind: 'gate',
-      label: `${g.cond} 면 ${g.stop === 'throw' ? '오류' : '중단'}`,
-      note: '이 조건이 참이면 아래 단계는 실행되지 않습니다',
-      line: g.line,
-    })),
+    ...gates.map(g => ({ kind: 'gate', ...describeGate(g) })),
     ...immediate.map(s => ({
       kind: 'setter', phase: 'sync',
       label: `${s.name}()`,

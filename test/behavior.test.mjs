@@ -191,3 +191,122 @@ export default function P() {
 `)
   assert.equal(steps.filter(s => s.kind === 'wait').length, 0)
 })
+
+/* ------------------------------------------------------------------
+ * 이벤트 연쇄에도 관문
+ *
+ * ⏱ 타임라인에만 관문이 있으면, 위쪽 연쇄에서는 Effect 가 언제나 끝까지
+ * 가는 것처럼 보입니다. 두 섹션이 **같은 문장**으로 같은 자리를 가리켜야
+ * 하나를 보고 다른 하나를 이해할 수 있습니다.
+ * ---------------------------------------------------------------- */
+
+const gateFlow = (code, compName = 'Panel') => {
+  const c = parseBehavior(code).components.find(x => x.name === compName)
+  return { comp: c, steps: c.events[0].flows[0].steps }
+}
+
+test('Effect 재실행 뒤에 관문이 붙는다', () => {
+  const { steps } = gateFlow(`import { useState, useEffect } from 'react'
+
+export default function Panel() {
+  const [tab, setTab] = useState('a')
+  useEffect(() => {
+    if (tab !== 'posts') return
+    fetchPosts(tab).then(setList)
+  }, [tab])
+  return <button onClick={() => setTab('posts')}>t</button>
+}
+`)
+
+  const i = steps.findIndex(s => s.kind === 'effect')
+  assert.equal(steps[i + 1].kind, 'gate', 'Effect 바로 뒤가 관문이어야 한다')
+  assert.equal(steps[i + 1].label, "tab !== 'posts' 면 중단", '조건식은 원본 그대로')
+  assert.match(steps[i + 1].note, /아래 단계는 실행되지 않습니다/)
+})
+
+test('관문 문장은 ⏱ 타임라인과 글자까지 같다', () => {
+  const { comp, steps } = gateFlow(`import { useState, useEffect } from 'react'
+
+export default function Panel() {
+  const [n, setN] = useState(0)
+  useEffect(() => {
+    if (!n) return
+    if (n > 10) throw new Error('too big')
+    track(n)
+  }, [n])
+  return <button onClick={() => setN(1)}>n</button>
+}
+`)
+
+  const inChain = steps.filter(s => s.kind === 'gate').map(s => s.label)
+  const inTimeline = comp.timing[0].timeline.filter(s => s.kind === 'gate').map(s => s.label)
+
+  assert.deepEqual(inChain, ['!n 면 중단', 'n > 10 면 오류'])
+  assert.deepEqual(inChain, inTimeline, '두 섹션이 다른 말을 하면 안 된다')
+})
+
+test('훅 안의 Effect 면 관문도 그 훅 구역 안이다', () => {
+  // 구역이 중간에 끊기면 UI 가 상자를 두 개로 쪼갭니다
+  const { steps } = gateFlow(`import { useState, useEffect } from 'react'
+
+function useFeed() {
+  const [tab, setTab] = useState('a')
+  const [posts, setPosts] = useState([])
+  useEffect(() => {
+    if (tab !== 'posts') return
+    fetchPosts(tab).then(setPosts)
+  }, [tab])
+  return { setTab, posts }
+}
+
+export default function Panel() {
+  const { setTab } = useFeed()
+  return <button onClick={() => setTab('posts')}>t</button>
+}
+`)
+
+  assert.equal(steps.find(s => s.kind === 'gate').hook, 'useFeed')
+  assert.ok(
+    steps.slice(1, -1).every(s => s.hook === 'useFeed'),
+    '이벤트와 리렌더 사이는 한 구역으로 이어져야 한다'
+  )
+})
+
+/* --- 잡으면 안 되는 것 (⏱ 와 같은 기준) --- */
+
+test('await 뒤의 이른 반환은 연쇄에서도 관문이 아니다', () => {
+  // 실행을 막는 관문이 아니라 응답이 온 뒤의 언마운트 가드입니다
+  const { steps } = gateFlow(`import { useState, useEffect } from 'react'
+
+export default function Panel() {
+  const [tab, setTab] = useState('a')
+  const [n, setN] = useState(0)
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      const r = await load(tab)
+      if (!alive) return
+      setN(r)
+    })()
+    return () => { alive = false }
+  }, [tab])
+  return <button onClick={() => setTab('b')}>t</button>
+}
+`)
+
+  assert.ok(!steps.some(s => s.kind === 'gate'))
+  assert.ok(steps.some(s => s.kind === 'wait'), '대기 구간은 그대로 있어야 한다')
+})
+
+test('조건이 없는 Effect 에는 관문 스텝이 없다', () => {
+  const { steps } = gateFlow(`import { useState, useEffect } from 'react'
+
+export default function Panel() {
+  const [n, setN] = useState(0)
+  useEffect(() => { track(n) }, [n])
+  return <button onClick={() => setN(1)}>n</button>
+}
+`)
+
+  assert.ok(!steps.some(s => s.kind === 'gate'))
+})

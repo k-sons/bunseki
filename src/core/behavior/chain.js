@@ -7,6 +7,7 @@
  *
  * 비동기 Effect 는 응답 전/후로 갈라 그 사이에 `kind:'wait'` 스텝을 끼웁니다 —
  * ⏱ 타임라인과 같은 눈금(weight)이라, 두 섹션의 "기다리는 시간" 표현이 맞습니다.
+ * 되돌아 나가는 자리(`kind:'gate'`)도 같은 문장으로 함께 보여 줍니다.
  *
  * 스텝마다 `hook` 을 달아 둡니다 — 그 상태·Effect 가 컴포넌트가 아니라
  * 커스텀 훅 안에 있다는 뜻입니다. UI 는 이어지는 같은 훅 스텝을 한 구역으로 묶어
@@ -17,7 +18,7 @@
  */
 
 import { findSetterUsage, findCalls, findDirectCalls, findAsyncMarks, lineOf } from './collect.js'
-import { describeAsyncPhase } from './timing.js'
+import { describeAsyncPhase, findGates, describeGate } from './timing.js'
 
 /** 핸들러에서 로컬 함수를 따라 들어가는 최대 깊이 */
 const MAX_FN_DEPTH = 3
@@ -28,7 +29,7 @@ const MAX_EFFECT_DEPTH = 3
  * 컴포넌트 하나의 이벤트별 동작 연쇄를 만듭니다.
  * @returns {object[]} EventEntry[]
  */
-export function buildEvents(compName, collected, scope = {}) {
+export function buildEvents(compName, collected, scope = {}, code = null) {
   const { states, effects, localFns, handlers } = collected
   const { propNames = new Set(), outOfScope = new Map() } = scope
 
@@ -53,7 +54,7 @@ export function buildEvents(compName, collected, scope = {}) {
       buildFlow({
         handler, setter, viaFns,
         setterToState, setterKind, setterHook,
-        effects, setterNames,
+        effects, setterNames, code,
       })
     )
 
@@ -187,7 +188,7 @@ function resolveHandlerSetters(handler, localFns, setterNames) {
 /**
  * setter 하나에서 시작하는 흐름을 Step 배열로 평탄화합니다.
  */
-function buildFlow({ handler, setter, viaFns, setterToState, setterKind, setterHook, effects, setterNames }) {
+function buildFlow({ handler, setter, viaFns, setterToState, setterKind, setterHook, effects, setterNames, code }) {
   const steps = []
 
   steps.push({
@@ -244,7 +245,7 @@ function buildFlow({ handler, setter, viaFns, setterToState, setterKind, setterH
   }
 
   appendEffectSteps({
-    steps, state, effects, setterToState, setterHook, setterNames,
+    steps, state, effects, setterToState, setterHook, setterNames, code,
     depth: 0, visited: new Set(),
   })
 
@@ -255,7 +256,7 @@ function buildFlow({ handler, setter, viaFns, setterToState, setterKind, setterH
  * 상태가 바뀐 뒤 이어지는 Effect 재실행을 스텝으로 붙입니다.
  * Effect 안에서 또 상태가 바뀌면 재귀로 따라갑니다 (연쇄).
  */
-function appendEffectSteps({ steps, state, effects, setterToState, setterHook, setterNames, depth, visited }) {
+function appendEffectSteps({ steps, state, effects, setterToState, setterHook, setterNames, code, depth, visited }) {
   const triggered = effects.filter(
     e => e.trigger === 'deps' && e.deps.includes(state) && !visited.has(e.line)
   )
@@ -288,6 +289,21 @@ function appendEffectSteps({ steps, state, effects, setterToState, setterHook, s
       hookLine: inHookLine,
       badges: async,
     })
+
+    // 이 Effect 는 첫 줄에서 되돌아 나갈 수 있습니다 — ⏱ 타임라인과 같은 관문.
+    // 타임라인은 관문과 즉시 setter 를 줄 번호로 세우지만, 연쇄는 호출·setter 를
+    // 단계별로 늘어놓으므로 관문은 Effect 바로 뒤에 모읍니다.
+    // 말하려는 것은 "아래 단계로 못 갈 수 있다" 하나뿐이라 그걸로 충분합니다.
+    // 훅 안의 Effect 면 관문도 그 훅 안입니다 — 구역이 여기서 끊기면 안 됩니다.
+    for (const g of findGates(effect.body, code)) {
+      steps.push({
+        kind: 'gate',
+        ...describeGate(g),
+        hook: inHook,
+        hookLine: inHookLine,
+        badges: [],
+      })
+    }
 
     for (const fn of calls) {
       steps.push({
@@ -347,7 +363,7 @@ function appendEffectSteps({ steps, state, effects, setterToState, setterHook, s
       )
       if (chained.length > 0) {
         appendEffectSteps({
-          steps, state: nextState, effects, setterToState, setterHook, setterNames,
+          steps, state: nextState, effects, setterToState, setterHook, setterNames, code,
           depth: depth + 1, visited,
         })
         return

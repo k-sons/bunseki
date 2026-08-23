@@ -13,6 +13,7 @@ const STEP_KIND_LABEL = {
   effect: 'Effect 실행',
   rerender: '화면 갱신',
   wait: '대기',
+  gate: '관문',
   boundary: '여기서부터 범위 밖',
 }
 
@@ -443,7 +444,7 @@ function renderEventDetail(comp, ev, onNavigate) {
         target.appendChild(renderWaitStep(step))
         return
       }
-      target.appendChild(renderStep(step, ++num, onNavigate))
+      target.appendChild(renderStep(step, step.kind === 'gate' ? null : ++num, onNavigate))
     })
 
     wrap.appendChild(flowEl)
@@ -496,7 +497,8 @@ function renderConnector(nextStep) {
   arrow.textContent = '↓'
   conn.appendChild(arrow)
 
-  if (nextStep.note) {
+  // 관문의 설명은 알약 안(hint)에 붙습니다 — 화살표에 또 적으면 두 번 나옵니다
+  if (nextStep.note && nextStep.kind !== 'gate') {
     const note = document.createElement('span')
     note.className = 'behavior-connector__note'
     note.textContent = nextStep.note
@@ -546,15 +548,18 @@ function renderStep(step, num, onNavigate) {
   // 경계 스텝은 이유를 함께 보여줘야 "도구가 못 찾은 것"과 구분됩니다.
   // 훅에서 이름을 바꿔 받았다면(`const [on, toggle] = useToggle()`) 훅 코드에서
   // 찾아야 할 이름이 다르므로 그것도 적어 줍니다.
-  const hint = step.kind === 'boundary' && step.note
+  const hint = (step.kind === 'boundary' || step.kind === 'gate') && step.note
     ? step.note
     : step.hookInternal
       ? `${step.hook} 안에서는 ${step.hookInternal}() 입니다`
       : null
   const note = hint ? `<span class="behavior-step__hint">${esc(hint)}</span>` : ''
 
+  // 관문은 나아가는 단계가 아니라 **멈출 수 있는 자리**라 번호를 먹지 않습니다
+  const marker = step.kind === 'boundary' ? '·' : step.kind === 'gate' ? '↩' : num
+
   el.innerHTML = `
-    <span class="behavior-step__num">${step.kind === 'boundary' ? '·' : num}</span>
+    <span class="behavior-step__num">${marker}</span>
     <span class="behavior-step__body">
       <span class="behavior-step__kind">${STEP_KIND_LABEL[step.kind] || step.kind}</span>
       <span class="behavior-step__label">${esc(step.label)}${detail}${badges}</span>
