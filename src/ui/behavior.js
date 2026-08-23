@@ -46,8 +46,7 @@ export function renderBehaviorView(result, onNavigate) {
       )
     )
     container.appendChild(renderStateSummary(result.components, onNavigate))
-    const timing = renderTimingSection(result.components, onNavigate)
-    if (timing) container.appendChild(timing)
+    appendAnalysisSections(container, result.components, onNavigate)
     return container
   }
 
@@ -111,10 +110,18 @@ export function renderBehaviorView(result, onNavigate) {
   // 첫 이벤트를 기본 선택
   allChips[0].click()
 
-  const timing = renderTimingSection(result.components, onNavigate)
-  if (timing) container.appendChild(timing)
+  appendAnalysisSections(container, result.components, onNavigate)
 
   return container
+}
+
+/** 이벤트 연쇄 아래에 붙는 분석 섹션들 — 순서: 타이밍 → Effect 사이 관계 */
+function appendAnalysisSections(container, components, onNavigate) {
+  const timing = renderTimingSection(components, onNavigate)
+  if (timing) container.appendChild(timing)
+
+  const interplay = renderInterplaySection(components, onNavigate)
+  if (interplay) container.appendChild(interplay)
 }
 
 /**
@@ -231,6 +238,115 @@ function renderTimingPill(step, onNavigate) {
     ? `<span class="timing-pill__guard">${step.guarded ? '🛡 가드됨' : '가드 없음'}</span>`
     : ''
   pill.innerHTML = `<span class="timing-pill__label">${step.label}${detail}</span>${guard}`
+
+  if (step.line && onNavigate) {
+    pill.classList.add('is-clickable')
+    pill.addEventListener('click', () => onNavigate(step.line))
+  }
+  return pill
+}
+
+/**
+ * 🔗 Effect 사이 관계 — 여러 Effect 가 같은 상태를 두고 얽히는 모습.
+ *   무한 루프 : deps 로 쓰는 상태를 스스로(혹은 서로) 되받아 멈추지 않음
+ *   경합      : 같은 상태를 여러 Effect 가 바꿈 — 누가 마지막에 쓰나
+ *   연쇄      : A 가 바꾼 상태를 B 가 deps 로 써서 이어서 실행됨
+ */
+function renderInterplaySection(components, onNavigate) {
+  const notable = components
+    .map(c => ({ name: c.name, items: c.interplay || [] }))
+    .filter(c => c.items.length > 0)
+
+  if (notable.length === 0) return null
+
+  const all = notable.flatMap(c => c.items)
+  const loopCount = all.filter(i => i.kind === 'loop').length
+  const raceCount = all.filter(i => i.kind === 'contention').length
+
+  const section = document.createElement('div')
+  section.className = 'behavior-timing behavior-interplay'
+
+  const title = document.createElement('div')
+  title.className = 'behavior-timing__title'
+  title.innerHTML = [
+    '🔗 Effect 사이 관계',
+    loopCount ? `<span class="behavior-timing__riskcount">무한 루프 ${loopCount}</span>` : '',
+    raceCount ? `<span class="behavior-timing__stalecount">경합 ${raceCount}</span>` : '',
+  ].filter(Boolean).join(' ')
+  section.appendChild(title)
+
+  notable.forEach(comp => {
+    const name = document.createElement('div')
+    name.className = 'behavior-comp__name'
+    name.textContent = comp.name
+    section.appendChild(name)
+
+    comp.items.forEach(item => section.appendChild(renderInterplayCard(item, onNavigate)))
+  })
+
+  return section
+}
+
+/** 항목 종류별 표시 이름 */
+const INTERPLAY_KIND_LABEL = {
+  loop: '무한 루프',
+  contention: '경합',
+  cascade: '연쇄',
+}
+
+function renderInterplayCard(item, onNavigate) {
+  const card = document.createElement('div')
+  card.className = `interplay-card interplay-card--${item.severity}`
+
+  const head = document.createElement('div')
+  head.className = 'timing-track__head'
+  head.innerHTML = `
+    <span class="interplay-card__kind interplay-card__kind--${item.kind}">${INTERPLAY_KIND_LABEL[item.kind] || item.kind}</span>
+    <span class="interplay-card__label">${item.label}</span>
+    <span class="timing-track__line">${item.lines.map(l => `L${l}`).join(' · ')}</span>
+  `
+  card.appendChild(head)
+
+  // 경합은 순서가 정해져 있지 않다는 뜻으로 ⇄, 연쇄·루프는 흐르는 방향으로 →
+  const separator = item.kind === 'contention' ? '⇄' : '→'
+  const flow = document.createElement('div')
+  flow.className = 'timing-flow'
+  item.steps.forEach((step, i) => {
+    if (i > 0) {
+      const arrow = document.createElement('span')
+      arrow.className = 'timing-arrow'
+      arrow.textContent = separator
+      flow.appendChild(arrow)
+    }
+    flow.appendChild(renderInterplayPill(step, onNavigate))
+  })
+  card.appendChild(flow)
+
+  const note = document.createElement('div')
+  note.className = 'timing-warn interplay-card__note'
+    + (item.severity === 'info' ? ' interplay-card__note--info' : '')
+    + (item.severity === 'warn' ? ' timing-warn--stale' : '')
+  note.innerHTML = `<span class="timing-warn__note">${item.note}</span>`
+  card.appendChild(note)
+
+  return card
+}
+
+/**
+ * 관계 알약 — 타이밍 알약과 같은 모양이되 꼬리표가 다릅니다.
+ * 여기서 궁금한 것은 "언마운트 가드가 있나" 가 아니라
+ * "이 변경이 비동기라 순서가 흔들리나 · 조건 안이라 멈출 수 있나" 입니다.
+ */
+function renderInterplayPill(step, onNavigate) {
+  const pill = document.createElement('span')
+  pill.className = `timing-pill timing-pill--${step.kind}` + (step.phase ? ` timing-pill--${step.phase}` : '')
+
+  const detail = step.detail ? `<span class="timing-pill__detail">${step.detail}</span>` : ''
+  const tag = step.kind !== 'setter' ? ''
+    : step.phase === 'async' ? '<span class="timing-pill__guard">응답 뒤</span>'
+    : step.guarded ? '<span class="timing-pill__guard">조건부</span>'
+    : ''
+  pill.innerHTML = `<span class="timing-pill__label">${step.label}${detail}</span>${tag}`
 
   if (step.line && onNavigate) {
     pill.classList.add('is-clickable')

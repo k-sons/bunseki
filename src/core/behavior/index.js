@@ -13,6 +13,7 @@ import { findComponents, collectComponent } from './collect.js'
 import { findCustomHooks, analyzeHook, resolveHookCalls, getPropNames } from './hooks.js'
 import { buildEvents, describeEffects } from './chain.js'
 import { analyzeEffectsTiming } from './timing.js'
+import { analyzeInterplay } from './interplay.js'
 
 /**
  * @typedef {Object} Step
@@ -83,13 +84,16 @@ export function parseBehavior(code) {
       outOfScope: hookUsage.outOfScope,
     }
 
+    const timing = analyzeEffectsTiming(merged.effects, merged.states)
+
     return {
       name: comp.name,
       startLine: comp.startLine,
       parent: comp.parent,
       states: merged.states,
       effects: describeEffects(merged.effects),
-      timing: analyzeEffectsTiming(merged.effects, merged.states),
+      timing,
+      interplay: analyzeInterplay(timing),
       events: buildEvents(comp.name, merged, scope),
     }
   })

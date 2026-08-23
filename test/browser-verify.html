@@ -95,6 +95,37 @@ export default function Ticker({ userId }) {
     const warns = [...t.querySelectorAll('.timing-warn__label')].map(w => w.textContent).join(' / ')
     log(`  track ${i + 1}: ${when} | ${chip} | ${warns || '(경고 없음)'}`)
   })
+  // 🔗 Effect 사이 관계 — 연쇄/루프/경합 카드가 실제로 그려지는지 봅니다
+  const raceCode = `import { useState, useEffect } from 'react'
+
+export default function Board({ query }) {
+  const [items, setItems] = useState([])
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  useEffect(() => {
+    fetchItems(query, page).then((res) => { setItems(res.list); setTotal(res.total) })
+  }, [query, page])
+  useEffect(() => {
+    setItems(items.filter(Boolean))
+  }, [items])
+  useEffect(() => {
+    setPage(1)
+  }, [total])
+  return <div onClick={() => setPage(page + 1)}>{items.length}</div>
+}
+`
+  const be3 = renderBehaviorView(parseBehavior(raceCode), () => {})
+  document.body.appendChild(be3)
+  log('interplay title: ' + (be3.querySelector('.behavior-interplay .behavior-timing__title')?.textContent || '').replace(/\s+/g, ' ').trim())
+  const cards = [...be3.querySelectorAll('.interplay-card')]
+  log('interplay cards: ' + cards.length)
+  cards.forEach((c, i) => {
+    const kind = c.querySelector('.interplay-card__kind')?.textContent || ''
+    const label = c.querySelector('.interplay-card__label')?.textContent || ''
+    const pills = [...c.querySelectorAll('.timing-pill')].map(p => p.textContent.replace(/\s+/g, ' ').trim())
+    log(`  card ${i + 1}: [${kind}] ${label}`)
+    log(`      ${pills.join('  ·  ')}`)
+  })
 } catch (err) {
   log('RESULT_OK: false\n' + err.stack)
 }

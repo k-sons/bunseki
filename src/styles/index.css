@@ -1586,6 +1586,78 @@ body {
   color: var(--text-secondary);
 }
 
+/* --- 🔗 Effect 사이 관계 --- */
+.interplay-card {
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid hsl(280, 50%, 55%);
+  border-radius: var(--radius-sm);
+}
+
+.interplay-card--risk {
+  border-left-color: hsl(0, 80%, 58%);
+  background: hsla(0, 80%, 55%, 0.04);
+}
+
+.interplay-card--warn {
+  border-left-color: hsl(28, 90%, 55%);
+  background: hsla(28, 90%, 55%, 0.04);
+}
+
+.interplay-card--info {
+  border-left-color: hsl(200, 60%, 50%);
+}
+
+.interplay-card__kind {
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 3px;
+  color: var(--text-secondary);
+  background: var(--bg-base, transparent);
+  border: 1px solid var(--border-subtle);
+}
+
+.interplay-card__kind--loop {
+  color: hsl(0, 80%, 68%);
+  background: hsla(0, 80%, 55%, 0.14);
+  border-color: transparent;
+}
+
+.interplay-card__kind--contention {
+  color: hsl(28, 90%, 66%);
+  background: hsla(28, 90%, 55%, 0.14);
+  border-color: transparent;
+}
+
+.interplay-card__kind--cascade {
+  color: hsl(200, 70%, 68%);
+  background: hsla(200, 70%, 55%, 0.14);
+  border-color: transparent;
+}
+
+.interplay-card__label {
+  font-size: 0.74rem;
+  color: var(--text-primary);
+}
+
+.interplay-card__note {
+  background: transparent;
+  border-color: var(--border-subtle);
+}
+
+.interplay-card__note--info {
+  border-style: dashed;
+}
+
+.timing-pill--loopback {
+  color: hsl(0, 80%, 68%);
+  border-color: hsla(0, 80%, 55%, 0.4);
+  border-style: dashed;
+}
+
 /* --- 오류 --- */
 .behavior-error {
   padding: 18px;

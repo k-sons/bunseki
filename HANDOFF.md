@@ -56,18 +56,35 @@
   트랙 머리말에 **`⚠ [id] 빠짐?`** 칩 + 주황 경고 박스.
   **deps 가 빠진 effect 는 동기여도** 이 섹션에 나옴(경고를 숨기지 않으려고).
 
+### (5) A 트랙 3단계 — 다중 effect 경합 — 이번 작업
+- **`behavior/interplay.js`(신규)**: timing 결과만 재료로 써서 Effect 사이 관계를 봅니다.
+  "쓴다"(`setters[].state`) 와 "읽는다"(`trigger==='deps'` 이고 deps 에 그 상태가 있음) 를
+  간선으로 이어 그래프를 만든 뒤:
+  - **무한 루프(loop)** — 고리. 스스로 되받거나(`[count]` 인데 `setCount`) 둘이 서로 되받음.
+    setter 가 전부 조건문 안이면 `warn`, 아니면 `risk`.
+  - **경합(contention)** — 같은 상태를 Effect 둘 이상이 바꿈. 하나라도 비동기면 `risk`
+    (응답 순서에 따라 늦게 온 옛 요청이 새 값을 덮어씀), 전부 동기면 `info`(선언 순서대로).
+  - **연쇄(cascade)** — 고리가 아닌 간선을 최대 4단계까지 한 줄로 묶음. `info`.
+  - 고리에 속한 간선은 연쇄로 중복 보고하지 않음. 항목은 심각도순 정렬, 컴포넌트당 최대 8개.
+- `index.js`: `timing` 을 변수로 뽑아 `interplay: analyzeInterplay(timing)` 추가.
+- UI: ⏱ 타이밍 섹션 **아래**에 **`🔗 Effect 사이 관계`** 섹션.
+  카드마다 `[무한 루프]/[경합]/[연쇄]` 배지 + 제목 + 알약 흐름 + 설명.
+  연쇄·루프는 `→`, 경합은 순서가 정해져 있지 않다는 뜻으로 `⇄` 로 잇습니다.
+  setter 알약 꼬리표는 `응답 뒤`(비동기) / `조건부`(if 안).
+
 ---
 
 ## 3. 현재 상태 (스냅샷)
 
-- ✅ **작업트리 깨끗. 미커밋 없음.** `main` 최신 = `de33b6f`.
-- ✅ `npm test` → **37 pass / 0 fail**
-  (parser 10 · behavior 5 · examples 3 · timing 8 · stale-deps 11)
+- ✅ **작업트리 깨끗. 미커밋 없음.** `main` 최신 = A 트랙 3단계 커밋.
+- ✅ `npm test` → **50 pass / 0 fail**
+  (parser 10 · behavior 5 · examples 3 · timing 8 · stale-deps 11 · interplay 13)
 - ✅ `npx vite build` 정상. 초기 번들 59KB, `@babel/parser` 는 `lib` 청크(≈300KB)로 **지연 로드**.
 - ✅ 브라우저 실제 렌더 확인(headless Chrome + `test/browser-verify.html`):
-  `⏱ 타이밍 · deps 점검 / 위험 1 / deps 빠짐 2`, `⚠ [userId] 빠짐?` 칩까지 그려짐.
+  `⏱ 타이밍 · deps 점검 / 위험 1 / deps 빠짐 2`, `⚠ [userId] 빠짐?` 칩,
+  `🔗 Effect 사이 관계 / 무한 루프 2 / 경합 1` 카드 4장까지 그려짐.
 - ✅ 노이즈 점검: useMemo/useCallback/AbortController/ref 가 섞인 대시보드 컴포넌트에서
-  **오탐 0**, ESLint `exhaustive-deps` 와 같은 지점만 지적.
+  **오탐 0**(deps·interplay 모두), ESLint `exhaustive-deps` 와 같은 지점만 지적.
 
 ---
 
@@ -87,10 +104,11 @@ src/
 │       ├── chain.js            # 이벤트→setter→상태→Effect 연쇄(Step 배열)
 │       ├── hooks.js            # 같은 파일 커스텀 훅 추적 + 스코프 경계
 │       ├── timing.js           # ⏱ 비동기 타이밍 + 언마운트 위험 + 참조 수집
-│       └── deps.js             # ⚠ deps 에서 빠진 값 = stale closure
+│       ├── deps.js             # ⚠ deps 에서 빠진 값 = stale closure
+│       └── interplay.js        # 🔗 Effect 사이 관계 = 루프/경합/연쇄
 ├── ui/
 │   ├── structure.js            # 🗺️
-│   └── behavior.js             # ⚡ + ⏱ 타이밍/deps 점검 UI (renderTimingSection)
+│   └── behavior.js             # ⚡ + ⏱ 타이밍/deps UI + 🔗 관계 UI (renderInterplaySection)
 └── data/examples.js            # 내장 예제 2개
 test/                           # node --test. *.test.mjs + browser-verify.html
 ```
@@ -104,6 +122,11 @@ test/                           # node --test. *.test.mjs + browser-verify.html
 → `timing.js` 가 소비해 `{ line, hook, trigger, deps, viaHook, isAsync, asyncKind,
 hasCleanup, hasGuard, risk, staleDeps, setters[], timeline[] }` 로 바꿔 UI 에 넘김.
 **`owner`(AST 노드)는 UI 로 새어 나가지 않음** — timing 결과에는 담기지 않는다.
+
+### 🔗 interplay 항목 (UI 계약)
+`{ kind:'loop'|'contention'|'cascade', severity:'risk'|'warn'|'info', label, note,
+lines:number[], steps:[{kind:'effect'|'setter'|'loopback', label, detail, line, phase?, guarded?}] }`
+UI 는 `steps` 를 순서대로 알약으로 그리기만 한다.
 
 ---
 
@@ -124,15 +147,14 @@ npx vite --port 5199 &
 
 ## 6. 다음 할 일 (A 트랙 이어가기)
 
-사용자가 승인한 순서. 1·2단계는 완료·커밋됨.
+사용자가 승인한 순서. 1·2·3단계는 완료·커밋됨.
 
-- **3단계 — 다중 effect 경합** ← **여기부터**
-  같은 상태를 여러 effect 가 건드릴 때 실행 순서/충돌을 보여주기.
-  예: effect A 가 `setUser` 하고 effect B 의 deps 에 `user` 가 있으면 → A 다음 B 가 도는 연쇄.
-  두 effect 가 같은 상태를 서로 되받으면 → 무한 루프 위험.
-  (재료는 이미 있음: `timing[].setters[].state` 와 `timing[].deps`. `chain.js` 의
-  "state → 그 state 를 deps 로 쓰는 effect" 탐색 로직도 참고.)
-- **4단계 — 상대 시간감**: 타임라인의 "대기" 구간을 실제 폭으로 표현.
+- **4단계 — 상대 시간감** ← **여기부터**
+  타임라인의 "대기" 구간을 실제 폭으로 표현(즉시 실행 vs 네트워크 응답 대기).
+- 남겨 둔 후보(3단계에서 의도적으로 안 건드린 것):
+  - **deps 배열이 없는 Effect 가 상태를 바꾸는 경우** — 매 렌더 재실행 → 무한 루프.
+    지금 그래프는 `trigger==='deps'` 인 Effect 로만 간선을 만들어서 잡히지 않음.
+    같은 `loop` 카드로 붙이면 자연스러움(단일 effect 라 3단계 범위 밖이라 보류).
 
 작업 방식(확립됨): **작게 구현 → 테스트 추가 → `npm test` → 브라우저 실제 렌더 확인 → 커밋.**
 
@@ -150,6 +172,8 @@ npx vite --port 5199 &
 - **줄바꿈이 파일마다 섞여 있음**(CRLF/LF). `core.autocrlf=true` 라 커밋 시 LF 로 정규화되니,
   스크립트로 파일을 고칠 땐 **읽을 때 `\n` 으로 맞추고 원래 형식으로 되돌려 쓸 것**
   (안 그러면 파일 전체가 diff 로 잡힘).
-- **오탐 정책**: `deps.js` 의 판정은 **놓치는 쪽(false negative)이 헛경보보다 낫다**는 기준.
-  규칙을 넓힐 땐 `test/stale-deps.test.mjs` 의 "잡으면 안 되는 것" 6개를 먼저 확인.
+- **오탐 정책**: `deps.js`·`interplay.js` 의 판정은
+  **놓치는 쪽(false negative)이 헛경보보다 낫다**는 기준.
+  규칙을 넓힐 땐 `test/stale-deps.test.mjs` 의 "잡으면 안 되는 것" 6개와
+  `test/interplay.test.mjs` 의 마지막 3개를 먼저 확인.
 - 임시 검증 파일은 repo 밖(세션 scratchpad)에 만들 것. 작업트리는 깨끗하게 유지.
