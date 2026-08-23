@@ -210,3 +210,39 @@ test('.then(setUser) 처럼 그대로 넘긴 setter 도 응답 뒤 호출로 센
   assert.equal(s.deferred, true)
   assert.equal(e.risk, 'unmount-setstate', '가드가 있을 수 없는 형태라 위험이 맞다')
 })
+
+
+/* ── 이른 반환 가드 ─────────────────────────────────────────────────────────
+ * if (alive) { setUser(u) } 만 가드로 보면, 훨씬 흔한
+ * if (!alive) return 형태를 헛경보로 올립니다.
+ */
+
+test('if (!alive) return 뒤의 setState 는 가드된 것으로 본다', () => {
+  const t = timingOf(`  useEffect(() => {
+    let alive = true
+    fetchUser(id).then((u) => {
+      if (!alive) return
+      setUser(u)
+      setLoading(false)
+    })
+    return () => { alive = false }
+  }, [id])`)
+  const e = firstAsync(t)
+  assert.equal(e.risk, null, '헛경보를 내면 안 된다')
+  assert.equal(e.hasGuard, true)
+  assert.ok(e.setters.filter(s => s.deferred).every(s => s.guarded))
+})
+
+test('else 가 붙으면 이른 반환이 아니라 갈림길이다', () => {
+  // if (x) return; 은 "여기서 끝" 이지만 if (x) …; else … 는 흐름이 갈릴 뿐입니다
+  const t = timingOf(`  useEffect(() => {
+    fetchUser(id).then((u) => {
+      if (!u) { setUser(null) } else { log(u) }
+      setLoading(false)
+    })
+  }, [id])`)
+  const e = firstAsync(t)
+  const late = e.setters.find(s => s.name === 'setLoading')
+  assert.equal(late.guarded, false, 'else 가 있으면 뒤 문장을 지키지 못한다')
+  assert.equal(e.risk, 'unmount-setstate')
+})

@@ -13,7 +13,7 @@
   콘솔(F12)을 확인하세요.
 -->
 <html><head><meta charset="utf-8"><title>browser verify</title></head><body>
-<div id="out" style="font-family:monospace; white-space:pre-wrap; padding:16px"></div>
+<div id="out" style="font-family:monospace; white-space:pre-wrap; overflow-wrap:anywhere; padding:16px"></div>
 <script type="module">
 import { parseCode } from '../src/core/parser.js'
 import { renderHighlightView } from '../src/core/highlighter.js'
@@ -164,6 +164,16 @@ export default function Slow({ id }) {
     })
     log(`  wait track ${i + 1}: ` + pills.join('  ·  '))
   })
+  // 붙여넣은 코드가 HTML 로 해석되지 않는지 — `<button onClick>` 라벨이 진짜
+  // 엘리먼트로 렌더되면 스텝이 깨집니다. 라벨 안에는 span 말고 아무것도 없어야 합니다.
+  const labels = [...document.querySelectorAll('.behavior-step__label')]
+  const injected = labels.filter(l => [...l.querySelectorAll('*')].some(n => n.tagName !== 'SPAN'))
+  log('라벨 HTML 주입: ' + injected.length + '건 (0 이어야 함)')
+  log('  라벨 예시: ' + labels.slice(0, 3).map(l => JSON.stringify(l.textContent.trim())).join(', '))
+
+  // 좁은 화면에서 가로 스크롤이 생기지 않는지 — 대기 알약/카드가 넓어졌으므로
+  const de = document.documentElement
+  log('가로 넘침: ' + (de.scrollWidth - de.clientWidth) + 'px (문서 폭 ' + de.clientWidth + 'px)')
 } catch (err) {
   log('RESULT_OK: false\n' + err.stack)
 }

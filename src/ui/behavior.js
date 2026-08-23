@@ -17,6 +17,13 @@ const STEP_KIND_LABEL = {
 }
 
 /**
+ * 붙여넣은 코드에서 온 문자열은 **반드시** 이걸 거쳐야 합니다.
+ * 그러지 않으면 `<button onClick>` 같은 라벨이 innerHTML 에서 진짜 엘리먼트로
+ * 렌더돼 스텝이 깨집니다(그리고 남의 코드를 이 페이지에 심는 통로가 됩니다).
+ */
+const esc = (v) => escapeHtml(String(v ?? ''))
+
+/**
  * @param {import('../core/behavior/index.js').BehaviorResult} result
  * @param {(line: number) => void} onNavigate
  * @returns {HTMLElement}
@@ -85,8 +92,8 @@ export function renderBehaviorView(result, onNavigate) {
       chip.dataset.eventId = ev.id
       chip.title = `${ev.element} 의 ${ev.event} — L${ev.line}`
       chip.innerHTML = `
-        <span class="behavior-chip__el">${ev.element}</span>
-        <span class="behavior-chip__ev">${ev.event}</span>
+        <span class="behavior-chip__el">${esc(ev.element)}</span>
+        <span class="behavior-chip__ev">${esc(ev.event)}</span>
         <span class="behavior-chip__line">L${ev.line}</span>
       `
 
@@ -192,9 +199,9 @@ function renderTimingTrack(effect, onNavigate) {
   head.className = 'timing-track__head'
   const triggerStep = effect.timeline.find(s => s.kind === 'trigger')
   head.innerHTML = `
-    <span class="timing-track__when">${triggerStep ? triggerStep.label : effect.hook}</span>
-    ${effect.viaHook ? `<span class="hl-badge">${effect.viaHook}</span>` : ''}
-    ${stale.length ? `<span class="timing-track__stale">⚠ [${stale.join(', ')}] 빠짐?</span>` : ''}
+    <span class="timing-track__when">${esc(triggerStep ? triggerStep.label : effect.hook)}</span>
+    ${effect.viaHook ? `<span class="hl-badge">${esc(effect.viaHook)}</span>` : ''}
+    ${stale.length ? `<span class="timing-track__stale">⚠ [${esc(stale.join(', '))}] 빠짐?</span>` : ''}
     ${effect.hasCleanup ? '<span class="timing-track__flag">정리 있음</span>' : '<span class="timing-track__flag timing-track__flag--off">정리 없음</span>'}
     ${effect.line ? `<span class="timing-track__line">L${effect.line}</span>` : ''}
   `
@@ -232,7 +239,7 @@ function renderTimingTrack(effect, onNavigate) {
 function renderTimingWarn(step, modifier) {
   const warn = document.createElement('div')
   warn.className = 'timing-warn' + modifier
-  warn.innerHTML = `<span class="timing-warn__label">⚠ ${step.label}</span><span class="timing-warn__note">${step.note}</span>`
+  warn.innerHTML = `<span class="timing-warn__label">⚠ ${esc(step.label)}</span><span class="timing-warn__note">${esc(step.note)}</span>`
   return warn
 }
 
@@ -245,17 +252,18 @@ function renderTimingPill(step, onNavigate) {
   // step.weight 는 즉시 실행을 1 로 본 상대적인 눈금입니다 (실제 ms 아님).
   if (step.weight > 1) {
     pill.classList.add('timing-pill--wide')
-    pill.style.minWidth = `${Math.min(step.weight, WAIT_WEIGHT_MAX) * WAIT_PX_PER_WEIGHT}px`
+    pill.style.minWidth = `min(${Math.min(step.weight, WAIT_WEIGHT_MAX) * WAIT_PX_PER_WEIGHT}px, 100%)`
     pill.title = step.waitMs != null
       ? '기다리는 구간 — 코드에 적힌 지연값을 폭으로 옮겼습니다'
       : '기다리는 구간 — 실제 시간은 코드로 알 수 없어 대략적인 폭입니다'
   }
 
-  const detail = step.detail ? `<span class="timing-pill__detail">${step.detail}</span>` : ''
+  const detail = step.detail ? `<span class="timing-pill__detail">${esc(step.detail)}</span>` : ''
   const guard = step.kind === 'setter' && step.phase === 'async'
     ? `<span class="timing-pill__guard">${step.guarded ? '🛡 가드됨' : '가드 없음'}</span>`
     : ''
-  pill.innerHTML = `<span class="timing-pill__label">${step.label}${detail}</span>${guard}`
+  pill.innerHTML = `<span class="timing-pill__label">${esc(step.label)}${detail}</span>${guard}`
+  if (step.kind === 'async-wait') pill.setAttribute('aria-label', `${step.label} — ${step.detail}`)
 
   if (step.line && onNavigate) {
     pill.classList.add('is-clickable')
@@ -320,7 +328,7 @@ function renderInterplayCard(item, onNavigate) {
   head.className = 'timing-track__head'
   head.innerHTML = `
     <span class="interplay-card__kind interplay-card__kind--${item.kind}">${INTERPLAY_KIND_LABEL[item.kind] || item.kind}</span>
-    <span class="interplay-card__label">${item.label}</span>
+    <span class="interplay-card__label">${esc(item.label)}</span>
     <span class="timing-track__line">${item.lines.map(l => `L${l}`).join(' · ')}</span>
   `
   card.appendChild(head)
@@ -344,7 +352,7 @@ function renderInterplayCard(item, onNavigate) {
   note.className = 'timing-warn interplay-card__note'
     + (item.severity === 'info' ? ' interplay-card__note--info' : '')
     + (item.severity === 'warn' ? ' timing-warn--stale' : '')
-  note.innerHTML = `<span class="timing-warn__note">${item.note}</span>`
+  note.innerHTML = `<span class="timing-warn__note">${esc(item.note)}</span>`
   card.appendChild(note)
 
   return card
@@ -359,12 +367,12 @@ function renderInterplayPill(step, onNavigate) {
   const pill = document.createElement('span')
   pill.className = `timing-pill timing-pill--${step.kind}` + (step.phase ? ` timing-pill--${step.phase}` : '')
 
-  const detail = step.detail ? `<span class="timing-pill__detail">${step.detail}</span>` : ''
+  const detail = step.detail ? `<span class="timing-pill__detail">${esc(step.detail)}</span>` : ''
   const tag = step.kind !== 'setter' ? ''
     : step.phase === 'async' ? '<span class="timing-pill__guard">응답 뒤</span>'
     : step.guarded ? '<span class="timing-pill__guard">조건부</span>'
     : ''
-  pill.innerHTML = `<span class="timing-pill__label">${step.label}${detail}</span>${tag}`
+  pill.innerHTML = `<span class="timing-pill__label">${esc(step.label)}${detail}</span>${tag}`
 
   if (step.line && onNavigate) {
     pill.classList.add('is-clickable')
@@ -441,12 +449,13 @@ function renderWaitStep(step) {
   const el = document.createElement('div')
   el.className = 'behavior-wait'
   el.style.minHeight = `${Math.min(step.weight || 1, WAIT_WEIGHT_MAX) * WAIT_PX_PER_WEIGHT_V}px`
+  el.setAttribute('aria-label', `${step.label} — ${step.detail}`)
   el.title = step.waitMs != null
     ? '기다리는 구간 — 코드에 적힌 지연값을 높이로 옮겼습니다'
     : '기다리는 구간 — 실제 시간은 코드로 알 수 없어 대략적인 높이입니다'
   el.innerHTML = `
-    <span class="behavior-wait__label">⏳ ${step.label}</span>
-    <span class="behavior-wait__detail">${step.detail}</span>
+    <span class="behavior-wait__label">⏳ ${esc(step.label)}</span>
+    <span class="behavior-wait__detail">${esc(step.detail)}</span>
   `
   return el
 }
@@ -456,11 +465,11 @@ function renderStep(step, num, onNavigate) {
   el.className = `behavior-step behavior-step--${step.kind}`
 
   const badges = step.badges
-    .map(b => `<span class="hl-badge behavior-step__badge">${b}</span>`)
+    .map(b => `<span class="hl-badge behavior-step__badge">${esc(b)}</span>`)
     .join('')
 
   const detail = step.detail
-    ? `<span class="behavior-step__detail">${step.detail}</span>`
+    ? `<span class="behavior-step__detail">${esc(step.detail)}</span>`
     : ''
 
   const lineTag = step.line
@@ -469,14 +478,14 @@ function renderStep(step, num, onNavigate) {
 
   // 경계 스텝은 이유를 함께 보여줘야 "도구가 못 찾은 것"과 구분됩니다
   const note = step.kind === 'boundary' && step.note
-    ? `<span class="behavior-step__hint">${step.note}</span>`
+    ? `<span class="behavior-step__hint">${esc(step.note)}</span>`
     : ''
 
   el.innerHTML = `
     <span class="behavior-step__num">${step.kind === 'boundary' ? '·' : num}</span>
     <span class="behavior-step__body">
       <span class="behavior-step__kind">${STEP_KIND_LABEL[step.kind] || step.kind}</span>
-      <span class="behavior-step__label">${step.label}${detail}${badges}</span>
+      <span class="behavior-step__label">${esc(step.label)}${detail}${badges}</span>
       ${note}
     </span>
     ${lineTag}
@@ -516,7 +525,7 @@ function renderStateSummary(components, onNavigate) {
       row.innerHTML = `
         <span class="behavior-step__body">
           <span class="behavior-step__kind">${kindLabel}</span>
-          <span class="behavior-step__label">${target}<span class="behavior-step__detail">← ${s.setter || '?'}</span></span>
+          <span class="behavior-step__label">${esc(target)}<span class="behavior-step__detail">← ${esc(s.setter || '?')}</span></span>
         </span>
         <span class="behavior-step__line">L${s.line}</span>
       `
@@ -530,7 +539,7 @@ function renderStateSummary(components, onNavigate) {
       row.innerHTML = `
         <span class="behavior-step__body">
           <span class="behavior-step__kind">Effect</span>
-          <span class="behavior-step__label">${e.when}</span>
+          <span class="behavior-step__label">${esc(e.when)}</span>
         </span>
         <span class="behavior-step__line">L${e.line}</span>
       `

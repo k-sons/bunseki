@@ -209,10 +209,14 @@ function analyzeBody(effectBody, setterNames) {
     if (!body) return
     if (body.type === 'BlockStatement') {
       let deferred = deferredEntry
+      let guardedHere = guarded
       for (const stmt of body.body) {
         const awaitHere = containsDirectAwait(stmt)
-        visit(stmt, deferred || awaitHere, guarded, nested)
+        visit(stmt, deferred || awaitHere, guardedHere, nested)
         if (awaitHere) deferred = true
+        // if (!alive) return — 이 뒤의 문장은 조건이 참일 때만 실행됩니다.
+        // if (alive) { … } 로 감싼 것과 같은 보호라 똑같이 가드로 봅니다.
+        if (isEarlyReturnGuard(stmt)) guardedHere = true
       }
     } else {
       // 화살표 축약형 (본문이 식)
@@ -222,6 +226,23 @@ function analyzeBody(effectBody, setterNames) {
 
   visitFunctionBody(effectBody, false, false, false)
   return { setters: found, refs }
+}
+
+/**
+ * `if (…) return` / `if (…) throw` — 뒤의 문장을 지키는 이른 반환 가드인가.
+ *
+ * else 가 붙어 있으면 흐름이 갈라지는 것이지 "여기서 끝" 이 아니므로 세지 않습니다.
+ */
+function isEarlyReturnGuard(stmt) {
+  if (!stmt || stmt.type !== 'IfStatement' || stmt.alternate) return false
+  const c = stmt.consequent
+  if (!c) return false
+  if (c.type === 'ReturnStatement' || c.type === 'ThrowStatement') return true
+  if (c.type === 'BlockStatement' && c.body.length === 1) {
+    const only = c.body[0]
+    return only.type === 'ReturnStatement' || only.type === 'ThrowStatement'
+  }
+  return false
 }
 
 /** 중첩 함수를 건너뛰고, 이 함수 레벨에 await 가 직접 있는지 봅니다 */
