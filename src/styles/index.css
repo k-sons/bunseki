@@ -1522,6 +1522,22 @@ body {
   border-style: dashed;
 }
 
+/* 기다리는 구간 — 폭이 "여기서 시간이 흐른다" 를 나타냅니다 (실제 ms 아님).
+   결이 흐르는 줄무늬로 채워 지나가는 시간처럼 보이게 합니다. */
+.timing-pill--wide {
+  justify-content: center;
+  max-width: 100%;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    hsla(200, 80%, 55%, 0.12) 0 5px,
+    transparent 5px 11px
+  );
+}
+
+.timing-pill--async-wait .timing-pill__detail {
+  color: hsl(200, 75%, 72%);
+}
+
 .timing-pill--resolve {
   color: hsl(160, 60%, 60%);
   border-color: hsla(160, 60%, 45%, 0.4);

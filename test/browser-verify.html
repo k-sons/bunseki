@@ -129,6 +129,37 @@ export default function Board({ query }) {
     log(`  card ${i + 1}: [${kind}] ${label}`)
     log(`      ${pills.join('  ·  ')}`)
   })
+  // ⏱ 상대 시간감 — 기다리는 구간만 실제로 넓게 그려지는지 봅니다
+  const waitCode = `import { useState, useEffect } from 'react'
+
+export default function Slow({ id }) {
+  const [user, setUser] = useState(null)
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    setReady(false)
+    fetchUser(id).then(setUser)
+  }, [id])
+  useEffect(() => {
+    async function warmup() {
+      await sleep(3000)
+      setReady(true)
+    }
+    warmup()
+  }, [])
+  return <div>{user}</div>
+}
+`
+  const be4 = renderBehaviorView(parseBehavior(waitCode), () => {})
+  document.body.appendChild(be4)
+  const waitTracks = [...be4.querySelectorAll('.timing-track')]
+  log('wait tracks: ' + waitTracks.length)
+  waitTracks.forEach((t, i) => {
+    const pills = [...t.querySelectorAll('.timing-pill')].map(p => {
+      const w = p.style.minWidth
+      return p.textContent.replace(/\s+/g, ' ').trim() + (w ? ` [폭 ${w}]` : '')
+    })
+    log(`  wait track ${i + 1}: ` + pills.join('  ·  '))
+  })
 } catch (err) {
   log('RESULT_OK: false\n' + err.stack)
 }

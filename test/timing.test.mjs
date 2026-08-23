@@ -122,3 +122,77 @@ test('중첩 함수 안에서 부르는 setState 는 nested 로 표시된다', (
   assert.equal(e.setters.find(s => s.name === 'setLoading').nested, false)
   assert.equal(e.setters.find(s => s.name === 'setUser').nested, true)
 })
+
+
+/* ── 상대 시간감 (대기 구간의 폭) ───────────────────────────────────────────
+ * 타임라인에서 "기다리는 구간" 만 폭을 키웁니다. 실제 ms 는 알 수 없으므로
+ * weight 는 상대적인 눈금일 뿐이고, 코드에 지연 리터럴이 보일 때만 ms 를 답니다.
+ */
+
+const waitStep = (e) => e.timeline.find(s => s.kind === 'async-wait')
+
+test('네트워크 대기는 폭이 생기되 시간은 미상으로 둔다', () => {
+  const t = timingOf(`  useEffect(() => {
+    fetchUser(id).then((u) => setUser(u))
+  }, [id])`)
+  const w = waitStep(firstAsync(t))
+  assert.ok(w.weight > 1, '즉시 스텝(1)보다는 넓어야 한다')
+  assert.equal(w.waitMs, null, '왕복 시간은 코드로 알 수 없다')
+  assert.equal(w.detail, '시간 미상')
+})
+
+test('await 하는 지연 리터럴은 폭에 반영된다', () => {
+  const t = timingOf(`  useEffect(() => {
+    async function load() {
+      await sleep(2000)
+      setUser(await fetchUser(id))
+    }
+    load()
+  }, [id])`)
+  const w = waitStep(firstAsync(t))
+  assert.equal(w.waitMs, 2000)
+  assert.equal(w.detail, '≈2초')
+  assert.ok(w.weight > 6, '미상(기본값)보다 무거워야 한다')
+})
+
+test('new Promise(setTimeout) 로 감싼 지연도 읽는다', () => {
+  const t = timingOf(`  useEffect(() => {
+    async function load() {
+      await new Promise((r) => setTimeout(r, 300))
+      setUser(1)
+    }
+    load()
+  }, [id])`)
+  const w = waitStep(firstAsync(t))
+  assert.equal(w.waitMs, 300)
+  assert.equal(w.detail, '≈300ms')
+})
+
+test('await 밖의 타이머는 대기 시간으로 세지 않는다', () => {
+  // setInterval 은 effect 가 기다리는 구간이 아니라 나중에 반복될 일입니다.
+  const t = timingOf(`  useEffect(() => {
+    const timer = setInterval(() => setLoading(false), 1000)
+    fetchUser(id).then(setUser)
+    return () => clearInterval(timer)
+  }, [id])`)
+  const w = waitStep(firstAsync(t))
+  assert.equal(w.waitMs, null, '타이머 주기를 응답 대기로 오해하면 안 된다')
+})
+
+test('아주 긴 지연도 정해진 최대 무게를 넘지 않는다', () => {
+  const t = timingOf(`  useEffect(() => {
+    async function load() {
+      await sleep(600000)
+      setUser(1)
+    }
+    load()
+  }, [id])`)
+  assert.equal(waitStep(firstAsync(t)).weight, 12, '레이아웃이 깨지지 않도록 상한을 둔다')
+})
+
+test('동기 effect 에는 대기 스텝 자체가 없다', () => {
+  const t = timingOf(`  useEffect(() => {
+    setLoading(true)
+  }, [id])`)
+  assert.equal(t.filter(e => waitStep(e)).length, 0)
+})

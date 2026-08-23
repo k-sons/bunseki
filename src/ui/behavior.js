@@ -169,6 +169,10 @@ function renderTimingSection(components, onNavigate) {
   return section
 }
 
+/** 대기 알약의 폭 = weight × 이 값(px). 최대 무게는 12 (timing.js 와 맞춘 상한). */
+const WAIT_PX_PER_WEIGHT = 22
+const WAIT_WEIGHT_MAX = 12
+
 /** deps 에서 빠진 값 이름들 (없으면 빈 배열) */
 function staleNames(effect) {
   return (effect.staleDeps || []).map(d => d.name)
@@ -232,6 +236,17 @@ function renderTimingWarn(step, modifier) {
 function renderTimingPill(step, onNavigate) {
   const pill = document.createElement('span')
   pill.className = `timing-pill timing-pill--${step.kind}` + (step.phase ? ` timing-pill--${step.phase}` : '')
+
+  // 기다리는 구간만 폭을 키웁니다 — 모든 스텝이 같은 크기면 setLoading(true) 와
+  // "응답 대기" 가 같은 무게로 보여, 시간이 흐르는 자리가 드러나지 않습니다.
+  // step.weight 는 즉시 실행을 1 로 본 상대적인 눈금입니다 (실제 ms 아님).
+  if (step.weight > 1) {
+    pill.classList.add('timing-pill--wide')
+    pill.style.minWidth = `${Math.min(step.weight, WAIT_WEIGHT_MAX) * WAIT_PX_PER_WEIGHT}px`
+    pill.title = step.waitMs != null
+      ? '기다리는 구간 — 코드에 적힌 지연값을 폭으로 옮겼습니다'
+      : '기다리는 구간 — 실제 시간은 코드로 알 수 없어 대략적인 폭입니다'
+  }
 
   const detail = step.detail ? `<span class="timing-pill__detail">${step.detail}</span>` : ''
   const guard = step.kind === 'setter' && step.phase === 'async'

@@ -16,6 +16,8 @@
  *   - guard         : `if (alive)` 류로 setState 를 감싸거나 AbortController 로 취소하는가
  *   - risk          : 비동기 + 가드 없는 deferred setState → 언마운트 후 setState 위험
  *   - staleDeps     : effect 가 읽는데 deps 에는 없는 값 (deps.js) → 옛 값을 붙잡고 있음
+ *   - wait weight   : 기다리는 구간의 상대적 무게 — 타임라인에서 폭으로 그려
+ *                     "여기서 시간이 흐른다" 를 눈에 보이게 합니다 (실제 ms 아님)
  */
 
 import { walk, calleeName, isFunctionNode, lineOf } from './collect.js'
@@ -276,7 +278,15 @@ function buildTimeline({ effect, isAsync, asyncKind, immediate, deferred, hasCle
   }
 
   if (isAsync) {
-    steps.push({ kind: 'async-wait', label: `${asyncKind === '.then' ? 'Promise' : asyncKind} 대기`, badges: [asyncKind] })
+    const wait = estimateWait(effect.body)
+    steps.push({
+      kind: 'async-wait',
+      label: `${asyncKind === '.then' ? 'Promise' : asyncKind} 대기`,
+      badges: [asyncKind],
+      weight: wait.weight,
+      waitMs: wait.ms,
+      detail: wait.ms != null ? `≈${formatDuration(wait.ms)}` : '시간 미상',
+    })
     steps.push({ kind: 'resolve', label: '응답 도착' })
     for (const s of deferred) {
       steps.push({
@@ -317,4 +327,74 @@ function buildTimeline({ effect, isAsync, asyncKind, immediate, deferred, hasCle
   }
 
   return steps
+}
+
+/* ── 상대 시간감 ─────────────────────────────────────────────────────────────
+ *
+ * 타임라인의 모든 스텝이 같은 크기면 setLoading(true) 와 "응답 대기" 가 같은
+ * 무게로 보입니다. 기다리는 구간만 폭을 키워 시간이 흐르는 자리를 드러냅니다.
+ *
+ * 실제 ms 는 정적으로 알 수 없으므로 **상대적인 눈금**만 냅니다.
+ * 즉시 실행 스텝을 1 로 봤을 때, 대기는 2~12.
+ * 코드에 지연 리터럴이 보이면(await sleep(2000) 등) 그 값을 참고하고,
+ * 네트워크처럼 알 수 없으면 중간값을 씁니다.
+ */
+
+/** 왕복 시간을 알 수 없는 대기(네트워크 등)의 기본 무게 — 눈에 띄되 최대는 아니게 */
+const WAIT_WEIGHT_UNKNOWN = 6
+
+function weightForMs(ms) {
+  if (ms < 100) return 2        // 눈 깜짝할 사이
+  if (ms < 500) return 4
+  if (ms < 1000) return 5
+  if (ms < 3000) return 8
+  if (ms < 10000) return 10
+  return 12                     // 10초 이상 — 최대치
+}
+
+/** 사람이 읽는 길이 표기: 900 → "900ms", 3000 → "3초", 1500 → "1.5초" */
+function formatDuration(ms) {
+  if (ms < 1000) return `${ms}ms`
+  const sec = ms / 1000
+  return `${Number.isInteger(sec) ? sec : sec.toFixed(1)}초`
+}
+
+/**
+ * 이 effect 의 대기 구간이 얼마나 긴지 어림합니다.
+ *
+ * **await 하는 식 안에서만** 지연 리터럴을 찾습니다.
+ * effect 어딘가의 setInterval(…, 1000) 을 "응답 대기 시간" 으로 잘못 읽지 않으려는 것.
+ *   await sleep(2000)                          → 2000
+ *   await new Promise(r => setTimeout(r, 300)) → 300
+ * 못 찾으면 ms 는 null (= 시간 미상, 기본 무게).
+ */
+function estimateWait(body) {
+  let ms = null
+  walk(body, (n) => {
+    if (n.type !== 'AwaitExpression') return
+    const found = maxDelayLiteral(n.argument)
+    if (found != null && (ms == null || found > ms)) ms = found
+  })
+  return { ms, weight: ms == null ? WAIT_WEIGHT_UNKNOWN : weightForMs(ms) }
+}
+
+/** 지연을 뜻하는 호출의 ms 리터럴 중 가장 큰 값 (없으면 null) */
+const DELAY_CALLS = new Set(['sleep', 'delay', 'wait', 'pause'])
+
+function maxDelayLiteral(node) {
+  let ms = null
+  const take = (v) => {
+    if (typeof v === 'number' && Number.isFinite(v) && v > 0 && (ms == null || v > ms)) ms = v
+  }
+  walk(node, (n) => {
+    if (n.type !== 'CallExpression') return
+    const name = calleeName(n)
+    const args = n.arguments || []
+    if (name === 'setTimeout' || name === 'setInterval') {
+      if (args[1] && args[1].type === 'NumericLiteral') take(args[1].value)
+    } else if (DELAY_CALLS.has(name)) {
+      if (args[0] && args[0].type === 'NumericLiteral') take(args[0].value)
+    }
+  })
+  return ms
 }
