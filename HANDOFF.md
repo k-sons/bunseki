@@ -7,8 +7,8 @@
 
 ## 0. 새 세션이면 여기부터 (3분)
 
-1. `git log --oneline -5` — 마지막 커밋이 `d8f6a25` 인지 확인.
-2. `npm test` — **106 pass / 0 fail** 이면 출발점이 맞음.
+1. `git log --oneline -5` — 마지막 커밋이 `3355595` 인지 확인.
+2. `npm test` — **118 pass / 0 fail** 이면 출발점이 맞음.
 3. 이 문서 **3장(현재 상태)** 과 **6장(다음 할 일)** 만 보면 바로 이어서 작업 가능.
 4. 코드를 만지기 전, 손댈 파일이 4장 "계약" 3개 중 어디에 걸리는지 확인.
 
@@ -211,14 +211,38 @@
 - **판정은 그대로** — `findGates` 규칙을 넓히지 않았으므로 관문으로 안 세는 것 3개
   (await 뒤 · 나중에 불릴 콜백 안 · else 붙은 if)도 연쇄에서 똑같이 적용됨.
 
+### (13) F) Promise 사슬의 나머지 — `.catch` / `.finally` — 커밋 `3355595`
+- `.then` 만 세고 있어서 **가장 흔한 한 줄이 거꾸로** 그려지고 있었음:
+  `fetchIt(id).then(setData).catch(setError).finally(() => setLoading(false))`
+  → `setError` 는 **통째로 사라지고**, `.finally` 의 `setLoading(false)` 이 응답 **전** 으로
+  그려져 **"로딩이 언제 꺼지나" 가 정반대**로 보였음. 안 잡는 것(false negative)이 아니라
+  **틀린 그림**이라 고쳤습니다.
+- `timing.js`: **`PROMISE_METHODS`(`then`·`catch`·`finally`)** — 콜백을 셋 다 응답 이후
+  (`deferred`)로 봅니다. `.catch`/`.finally` 만 있어도 **비동기로 셈**(`asyncKind` 는 `.then`,
+  대기 알약은 `Promise 대기`).
+- **에러 경로 표시 `onError`(신규)** — 어디가 에러일 때만 가는 길인가:
+  `.catch(cb)` · `.then(onOk, onErr)` 의 **둘째 인자** · **`try/catch` 의 catch 절**.
+  실행 시점은 응답 뒤로 같지만 **늘 불리지는 않는다**는 뜻이라 가드 꼬리표와 **따로** 답니다.
+  **`.finally` 는 성공·실패 양쪽에서 불리므로 붙이지 않음.**
+- `analyzeBody` 의 훑기 인자에 `onError` 가 하나 늘었습니다(`visit`/`visitFunctionBody`).
+  한 번 켜지면 그 아래로 그대로 내려갑니다.
+- `chain.js`: 연쇄에도 같은 표시 — `describeAsyncPhase` 가 **`errorOnly`** 를 함께 내고
+  setter 스텝에 **`오류 시` 배지**. 연쇄는 이름 단위라, **성공 쪽에서도 한 번 불리는 이름**에는
+  붙이지 않습니다("늘 불린다" 가 사실이므로).
+- UI: `.timing-pill__when` — `오류 시`. 위험이 아니라 "늘 불리지는 않는다" 는 뜻이라
+  붉은 계열을 피해 주황(25).
+- **덤으로 헛경보 하나 막음** — `catch (error)` 의 이름을 **읽는 값으로 세고 있었음**.
+  같은 이름의 상태가 있으면 `deps 빠짐` 으로 잘못 나올 수 있었는데, 그 자리에서 **새로
+  묶는 이름**이므로 `refs` 에서 뺐습니다.
+
 ---
 
 ## 3. 현재 상태 (스냅샷)
 
-- ✅ **작업트리 깨끗. 미커밋 없음.** `main` 최신 = `d8f6a25`
-  (A 트랙 + B + E + C + D + **D-2** + **C-2** 완료).
-- ✅ `npm test` → **106 pass / 0 fail**
-  (parser 10 · behavior 15 · examples 3 · timing 30 · stale-deps 11 · interplay 19 ·
+- ✅ **작업트리 깨끗. 미커밋 없음.** `main` 최신 = `3355595`
+  (A 트랙 + B + E + C + D + **D-2** + **C-2** + **F** 완료).
+- ✅ `npm test` → **118 pass / 0 fail**
+  (parser 10 · behavior 17 · examples 3 · timing 39 · stale-deps 12 · interplay 19 ·
   hook-boundary 18)
 - ✅ `npx vite build` 정상. 초기 번들 59KB, `@babel/parser` 는 `lib` 청크(≈300KB)로 **지연 로드**.
 - ✅ 브라우저 실제 렌더 확인(headless Chrome + `test/browser-verify.html`):
@@ -239,6 +263,10 @@
 - ✅ 연쇄의 관문도 실제 렌더 확인:
   `setTab()→tab → useEffect 재실행 → ↩ tab !== 'posts' 면 중단 → fetchPosts() → ⏳ 응답 대기 → setPosts()`.
   스텝 번호 `1 2 3 4 ↩ 5 6 7`(**안 건너뜀**), 화살표에 관문 설명 **중복 0건**.
+- ✅ 오류 경로도 실제 렌더 확인:
+  ⏱ `setLoading() · Promise 대기 · 응답 도착 · setData() · setError() 오류 시 · setLoading()`,
+  ⚡ `setLoading() → ⏳ 응답 대기 → setError() 오류 시 → setData() → 리렌더`.
+  **꼬리표는 setError 에만** (`.finally` 의 setLoading 에는 안 붙음).
 - ✅ 노이즈 점검: useMemo/useCallback/AbortController/ref 가 섞인 대시보드 컴포넌트에서
   **오탐 0**(deps·interplay·gate 모두), ESLint `exhaustive-deps` 와 같은 지점만 지적.
 
@@ -276,7 +304,7 @@ test/                           # node --test. *.test.mjs + browser-verify.html
 ### ⚡ 동작 엔진의 effect 객체 (내부용)
 `collect.js` 가 만드는 raw effect: `{ hook, deps, depRoots, trigger, line, body, owner }`
 커스텀 훅에서 끌어온 effect 에는 `viaHook`(훅 이름) · `hookLine`(훅 선언 줄)이 더 붙는다.
-→ `timing.js` 가 소비해(setter 마다 `deferred`/`guarded`/`nested`/`inIf`)
+→ `timing.js` 가 소비해(setter 마다 `deferred`/`guarded`/`nested`/`inIf`/`onError`)
 `{ line, hook, trigger, deps, viaHook, isAsync, asyncKind,
 hasCleanup, hasGuard, risk, staleDeps, gates[], setters[], timeline[] }` 로 바꿔 UI 에 넘김.
 **`owner`(AST 노드)는 UI 로 새어 나가지 않음** — timing 결과에는 담기지 않는다.
@@ -290,6 +318,8 @@ UI 는 `trigger·risk·stale` 을 뺀 나머지를 순서대로 알약으로 그
 `gate` 는 `{ label, note, line }` — 조건이 참이면 **아래 단계로 가지 않는다**는 뜻.
 즉시 setter 와 함께 **줄 번호 순서로** 놓이므로, UI 는 순서를 다시 만지지 않는다.
 `phase:'sync'` setter 의 `conditional` 은 "조건문 가지 안" 이라는 뜻(`조건부` 꼬리표).
+`phase:'async'` setter 의 **`onError`** 는 "에러일 때만 불린다" 는 뜻(`오류 시` 꼬리표) —
+`guarded` 와 **묻는 것이 다르다**(늘 불리나 / 가드가 있나). 둘은 함께 붙을 수 있다.
 
 ### 🔗 이벤트 연쇄 스텝 (UI 계약)
 `kind: 'event'|'call'|'setter'|'effect'|'gate'|'wait'|'rerender'|'boundary'`
@@ -298,6 +328,9 @@ UI 는 `trigger·risk·stale` 을 뺀 나머지를 순서대로 알약으로 그
 `gate` 는 ⏱ 타임라인과 **같은 `describeGate()` 로 만든 같은 문장**이고, `note` 는
 **알약 안(hint)에만** 그린다 — 화살표 `note` 로도 그리면 같은 말이 두 번 나온다.
 연쇄의 `gate` 는 줄 번호로 세우지 않고 **Effect 스텝 바로 뒤에 모인다**.
+에러일 때만 바뀌는 상태의 setter 스텝에는 **`badges: ['오류 시']`** — ⏱ 의 `onError` 와 같은 말.
+연쇄는 **이름 단위**라, 성공 쪽에서도 불리는 이름에는 붙이지 않는다(`describeAsyncPhase`
+의 `errorOnly`).
 `buildEvents(name, collected, scope, code)` — **네 번째 인자는 원본 소스**(관문 조건식용).
 
 **`hook`** — 이 상태·Effect 가 사는 커스텀 훅 이름(컴포넌트 것이면 `null`).
@@ -339,12 +372,10 @@ npx vite --port 5199 &
 ## 6. 다음 할 일
 
 A 트랙(1~4) · **B) 이벤트 연쇄 대기 구간** · **E) 다지기** · **C) 조건부 실행 표시** ·
-**D) 커스텀 훅 경계 시각화** · **D-2) 훅이 내보낸 핸들러** · **C-2) 이벤트 연쇄 관문**
-까지 완료·커밋됨.
+**D) 커스텀 훅 경계 시각화** · **D-2) 훅이 내보낸 핸들러** · **C-2) 이벤트 연쇄 관문** ·
+**F) `.catch`/`.finally`** 까지 완료·커밋됨.
 다음 방향은 정해지지 않았으니 **사용자와 먼저 합의할 것.** 남은 후보:
 
-- **F) `.catch(setError)` 계열** — 지금은 `.then` 만 setter 로 셈. `.catch`/`.finally` 로
-  넘긴 setter 는 놓침(의도된 false negative). 넓힐지는 판단 필요.
 - **C-3) 관문의 사각지대** — `if (x) { setY(); return }` 처럼 **블록에 문장이 둘 이상**인
   이른 반환은 지금 관문으로 안 셈(`isEarlyReturnGuard` 가 문장 1개만 봄).
   넓히면 `guarded` 판정까지 함께 넓어지므로 위험 오탐을 먼저 확인할 것.
@@ -373,7 +404,10 @@ A 트랙(1~4) · **B) 이벤트 연쇄 대기 구간** · **E) 다지기** · **
   `test/timing.test.mjs` 의 "await 밖의 타이머는 대기 시간으로 세지 않는다" ·
   "else 가 붙으면 이른 반환이 아니라 갈림길이다" ·
   **"관문으로 잡으면 안 되는 것" 3개**(await 뒤 · 나중에 불릴 콜백 안 · else 붙은 if) +
-  `test/behavior.test.mjs` 의 **"await 뒤의 이른 반환은 연쇄에서도 관문이 아니다"** +
+  `test/behavior.test.mjs` 의 **"await 뒤의 이른 반환은 연쇄에서도 관문이 아니다"** ·
+  **"성공 쪽에서도 불리는 이름에는 오류 표시가 붙지 않는다"** +
+  `test/timing.test.mjs` 의 **".finally 는 성공·실패 양쪽에서 불리므로 오류 표시가 아니다"** +
+  `test/stale-deps.test.mjs` 의 **"잡은 오류의 이름은 빠진 deps 가 아니다"** +
   `test/hook-boundary.test.mjs` 의 **"잡으면 안 되는 것" 2개**(import 한 훅은 구역이 아니라
   경계 · 훅을 안 쓰는 컴포넌트에는 아무 스텝에도 훅이 안 붙음) +
   "deps 배열이 없는 Effect" 절의 안 잡는 케이스 4개를 먼저 확인.
