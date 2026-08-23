@@ -1782,6 +1782,49 @@ body {
 }
 
 /* --- 오류 --- */
+/* 문법 오류 안내 — 하이라이트/구조맵/메트릭/플로우가 함께 씁니다.
+   못 읽은 것을 빈 화면이나 0 으로 보여 주지 않기 위한 것입니다. */
+.parse-error {
+  padding: 18px;
+  margin-bottom: 14px;
+  background: hsla(0, 70%, 50%, 0.06);
+  border: 1px solid hsla(0, 70%, 55%, 0.25);
+  border-radius: var(--radius-sm);
+}
+
+.parse-error__title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: hsl(0, 75%, 65%);
+  margin-bottom: 8px;
+}
+
+.parse-error__msg {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+
+.parse-error__line {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  margin-bottom: 10px;
+}
+
+.parse-error__hint {
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.parse-error__hint code {
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+}
+
 .behavior-error {
   padding: 18px;
   background: hsla(0, 70%, 50%, 0.06);

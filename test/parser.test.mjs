@@ -137,3 +137,46 @@ test('엣지 케이스 — 빈 코드/문법 오류/순수 JS 에서 throw 하�
     assert.ok(Array.isArray(r.functions))
   }
 })
+
+
+/* ── 문법이 깨졌을 때 ────────────────────────────────────────────────────────
+ * 예전에는 파싱이 실패하면 조용히 빈 결과를 돌려줬습니다. 그러면 화면에서
+ * **"세어 보니 없다" 와 "못 셌다" 가 똑같이 0** 으로 보여, 조용히 틀린 결과를
+ * 내놓는 셈이 됩니다. 실패 사실을 결과에 실어 보내야 UI 가 구분할 수 있습니다.
+ */
+
+test('문법이 깨지면 왜 못 읽었는지를 결과에 실어 보낸다', () => {
+  const r = parseCode(`export default function A() {
+  const [n, setN] = useState(0)
+  return <div><button onClick={() => setN(1)}>x`)
+  assert.ok(r.error, '실패 사실이 결과에 있어야 한다')
+  assert.match(r.error.message, /JSX 태그가 닫히지 않았습니다/)
+  assert.equal(typeof r.error.line, 'number')
+})
+
+test('문법이 온전하면 error 는 null 이다', () => {
+  const r = parseCode(`export default function A() {
+  return <div>ok</div>
+}`)
+  assert.equal(r.error, null)
+})
+
+test('실패해도 줄 수와 sections 길이는 유지된다 — 하이라이트는 코드를 그려야 한다', () => {
+  const code = `function A() {
+  return <div>`
+  const r = parseCode(code)
+  assert.ok(r.error)
+  assert.equal(r.totalLines, 2)
+  assert.equal(r.sections.length, 2, 'sections 길이 = 총 줄 수 계약은 그대로')
+  assert.deepEqual(r.functions, [])
+})
+
+test('두 분석기가 같은 문장으로 실패를 알린다', async () => {
+  const { parseBehavior } = await import('../src/core/behavior/index.js')
+  const broken = `export default function A() {
+  return <div><span>`
+  const a = parseCode(broken)
+  const b = parseBehavior(broken)
+  assert.ok(a.error && b.error)
+  assert.equal(a.error.message, b.error.message, '한 곳에서 만든 문장을 함께 쓴다')
+})

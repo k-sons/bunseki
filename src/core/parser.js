@@ -23,6 +23,7 @@
  */
 
 import { parse } from '@babel/parser'
+import { toParseError } from './parse-error.js'
 
 /**
  * @typedef {Object} ParseResult
@@ -37,6 +38,9 @@ import { parse } from '@babel/parser'
  * @property {RNPattern[]} rnPatterns
  * @property {ComponentRelation[]} relations
  * @property {number} totalLines
+ * @property {{message: string, line: number|null}|null} error
+ *   파싱에 실패했으면 그 사유. **이때 나머지 필드는 "세어 보니 없다" 가 아니라
+ *   "못 셌다" 는 뜻입니다** — 렌더러는 0 을 사실처럼 보여 주지 말고 이 필드를 먼저 봐야 합니다.
  */
 
 const PARSE_OPTIONS = {
@@ -79,9 +83,11 @@ export function parseCode(code) {
   let ast
   try {
     ast = parse(code, PARSE_OPTIONS)
-  } catch {
+  } catch (err) {
     // 심하게 깨진 코드 — 분석은 비워 두되 하이라이트가 코드 자체는 그릴 수 있게 합니다.
-    return emptyResult(totalLines)
+    // **왜 비었는지를 함께 실어 보냅니다.** 안 그러면 화면에서 "없다" 와 "못 셌다" 가
+    // 똑같이 0 으로 보여, 조용히 틀린 결과를 내놓는 셈이 됩니다.
+    return emptyResult(totalLines, toParseError(err))
   }
 
   const exportedNames = collectExportedNames(ast)
@@ -127,15 +133,16 @@ export function parseCode(code) {
     sections,
     relations,
     totalLines,
+    error: null,
   }
 }
 
-function emptyResult(totalLines) {
+function emptyResult(totalLines, error = null) {
   return {
     imports: [], functions: [], constants: [], hooks: [],
     jsxComponents: [], comments: [], exports: [], rnPatterns: [],
     sections: new Array(totalLines).fill(null),
-    relations: [], totalLines,
+    relations: [], totalLines, error,
   }
 }
 

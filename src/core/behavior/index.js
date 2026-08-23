@@ -14,6 +14,7 @@ import { findCustomHooks, analyzeHook, resolveHookCalls, getPropNames } from './
 import { buildEvents, describeEffects } from './chain.js'
 import { analyzeEffectsTiming } from './timing.js'
 import { analyzeInterplay } from './interplay.js'
+import { translateParseError } from '../parse-error.js'
 
 /**
  * @typedef {Object} Step
@@ -103,22 +104,4 @@ export function parseBehavior(code) {
   })
 
   return { components, error: null }
-}
-
-/**
- * Babel 오류 메시지를 읽기 쉽게 바꿉니다.
- * 알려진 것만 번역하고, 나머지는 원문을 그대로 보여줍니다.
- */
-function translateParseError(err) {
-  const raw = String(err.message || '').replace(/\s*\(\d+:\d+\)\s*$/, '')
-
-  const known = {
-    UnterminatedJsxContent: 'JSX 태그가 닫히지 않았습니다. 코드가 중간에 잘렸는지 확인해 주세요.',
-    UnexpectedToken: '예상하지 못한 토큰이 있습니다.',
-    UnterminatedString: '문자열이 닫히지 않았습니다.',
-    UnterminatedComment: '주석이 닫히지 않았습니다.',
-    MissingSemicolon: '구문이 올바르게 끝나지 않았습니다.',
-  }
-
-  return known[err.reasonCode] || raw
 }

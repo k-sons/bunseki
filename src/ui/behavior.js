@@ -653,8 +653,8 @@ function renderError(error) {
     <div class="behavior-error__msg">${escapeHtml(error.message)}</div>
     ${error.line ? `<div class="behavior-error__line">L${error.line}</div>` : ''}
     <div class="behavior-error__hint">
-      동작 분석은 문법이 온전한 코드에만 적용됩니다.
-      다른 탭은 그대로 사용할 수 있습니다.
+      괄호나 태그가 닫히지 않으면 다른 탭도 함께 분석하지 못합니다.
+      컴포넌트를 통째로 붙여넣으면 다섯 탭 모두 정상 동작합니다.
     </div>
   `
   return el

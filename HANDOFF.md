@@ -7,8 +7,8 @@
 
 ## 0. 새 세션이면 여기부터 (3분)
 
-1. `git log --oneline -5` — 맨 위가 **인계문 갱신**, 그 아래가 `ee3cd82`(다-2) 인지 확인.
-2. `npm test` — **142 pass / 0 fail** 이면 출발점이 맞음.
+1. `git log --oneline -5` — 맨 위가 **인계문 갱신**, 그 아래가 `parse-error` 커밋인지 확인.
+2. `npm test` — **146 pass / 0 fail** 이면 출발점이 맞음.
 3. 이 문서 **3장(현재 상태)** 과 **6장(다음 할 일)** 만 보면 바로 이어서 작업 가능.
 4. 코드를 만지기 전, 손댈 파일이 4장 "계약" 3개 중 어디에 걸리는지 확인.
 
@@ -301,16 +301,41 @@
 - **판정은 그대로** — else 붙은 if · 응답 뒤의 이른 반환 · 나중에 불릴 콜백 안은
   핸들러에서도 관문이 아닙니다(테스트로 고정).
 
+### (18) 잘린 코드의 "조용한 0" — 문법 오류를 화면이 말하게
+- 문서를 검증하다 찾은 **실제 문제**입니다. `91f1a13` 에서 `parser.js` 가 AST 로 바뀌며
+  잘린 코드 내성이 사라졌는데, **실패 사실이 어디에도 실려 있지 않았습니다.**
+  구조맵은 빈 화면, 메트릭·상태바는 전부 `0` — **"세어 보니 없다" 와 "못 셌다" 가
+  화면에서 구분되지 않았습니다.** 이 프로젝트가 내내 지켜 온
+  *"조용히 틀린 결과를 내놓지 않는다"* 와 정면으로 어긋납니다.
+  게다가 동작 탭 문구가 **"다른 탭은 그대로 사용할 수 있습니다"** 라고 거짓말을 했습니다.
+- **`core/parse-error.js`(신규)** — 오류 번역을 한 곳으로. 두 분석기가 같은
+  `@babel/parser` 를 쓰므로 같은 오류를 만나는데 서로 다른 말을 하면 사용자가 헷갈립니다.
+  `behavior/index.js` 의 중복 번역기는 제거했습니다.
+- **`ParseResult` 에 `error` 추가** — `{ message, line } | null`. **계약이 바뀐 곳이니
+  4장도 함께 볼 것.** 성공 시 `null`, 실패 시 `emptyResult(totalLines, toParseError(err))`.
+  `sections` 길이 = 총 줄 수 계약은 실패해도 유지됩니다(하이라이트가 코드를 그려야 하므로).
+- `main.js`: `renderParseError()` — 하이라이트는 **안내 + 코드**(어디가 잘렸는지 보라고),
+  구조맵·메트릭·플로우는 **안내만**. 상태바는 `0` 대신 **`—`**.
+  오류 문장은 `textContent` 로 넣습니다(메시지에 `<` 가 섞여도 주입되지 않게).
+- `ui/behavior.js`: 거짓 문구를 사실로 교체.
+- 테스트 4개 추가(`parser.test.mjs`) — 실패 시 `error` · 성공 시 `null` ·
+  `sections` 길이 유지 · **두 분석기가 같은 문장**.
+
 ---
 
 ## 3. 현재 상태 (스냅샷)
 
-- ✅ **작업트리 깨끗. 미커밋 없음.** `main` 최신 = `ee3cd82`
-  (A 트랙 + B + E + C + D + D-2 + C-2 + F + C-3 + **라(다지기)** + **다-1** + **다-2** 완료).
-- ✅ `npm test` → **142 pass / 0 fail**
-  (parser 10 · behavior 29 · examples 3 · timing 51 · stale-deps 12 · interplay 19 ·
+- ✅ **작업트리 깨끗. 미커밋 없음.**
+  (A 트랙 + B + E + C + D + D-2 + C-2 + F + C-3 + 라(다지기) + 다-1 + 다-2 +
+  **문법 오류 표시** 완료).
+- ✅ `npm test` → **146 pass / 0 fail**
+  (parser 14 · behavior 29 · examples 3 · timing 51 · stale-deps 12 · interplay 19 ·
   hook-boundary 18)
-- ✅ `npx vite build` 정상. 초기 번들 59KB, `@babel/parser` 는 `lib` 청크(≈300KB)로 **지연 로드**.
+- ✅ `npx vite build` 정상. 초기 번들 60KB, `@babel/parser` 는 `lib` 청크(≈300KB)로 **지연 로드**
+  (`dist/index.html` 에 `lib` 의 `modulepreload` 가 없음을 확인).
+  ⚠️ **`vite.config.js` 의 `manualChunks` 는 `@babel` 만 `lib` 으로 모읍니다.**
+  `node_modules` 를 통째로 묶으면 `prismjs`(정적 import)가 끌려와 **babel 이 첫 화면에
+  딸려옵니다** — 실제로 그렇게 되는 것을 확인하고 좁혔습니다. 만질 땐 빌드 산출물 확인 필수.
 - ✅ 브라우저 실제 렌더 확인(headless Chrome + `test/browser-verify.html`):
   `⏱ 타이밍 · deps 점검 / 위험 1 / deps 빠짐 2`, `⚠ [userId] 빠짐?` 칩,
   `🔗 Effect 사이 관계 / 무한 루프 3 / 경합 2` 카드 7장까지 그려짐.
@@ -341,6 +366,10 @@
   `<button onClick> → save() → ↩ !id 면 중단 → ⏳ 응답 대기 [높이 42px] → setDone()`,
   오류 흐름은 `… → setErr() 오류 시`. 관문 표시 `↩`(번호를 먹지 않음),
   기다리지 않는 핸들러에는 대기 스텝 0개.
+- ✅ 문법 오류 표시도 실제 앱에서 확인: 잘린 파일에서 네 탭 모두
+  `문법 오류로 코드를 읽지 못했습니다 / 예상하지 못한 토큰이 있습니다. / L11`,
+  하이라이트는 안내 + 코드 12줄, 상태바 `함수: —`. **온전한 코드는 회귀 없음**
+  (다섯 탭 렌더 글자 수가 수정 전과 동일). 360px 넘침 0px · 메시지 HTML 주입 0건.
 - ✅ 노이즈 점검: useMemo/useCallback/AbortController/ref 가 섞인 대시보드 컴포넌트에서
   **오탐 0**(deps·interplay·gate 모두), ESLint `exhaustive-deps` 와 같은 지점만 지적.
 
@@ -373,7 +402,13 @@ test/                           # node --test. *.test.mjs + browser-verify.html
 
 ### ⚠️ 반드시 지킬 계약 (`ParseResult`)
 `parser.js` 를 또 손댈 땐 **출력 형태를 깨지 말 것**. 렌더러 4개가 이 필드를 그대로 읽음:
-`imports · functions[{name,type,isAsync,params,startLine,endLine,lineCount,hooks:[{name,category}],handlers[],isExported,isDefault}] · constants · hooks[{name,line,isRN,category}] · jsxComponents · comments · exports · rnPatterns · sections(길이=totalLines) · relations[{from,to,type,isAsync}] · totalLines`
+`imports · functions[{name,type,isAsync,params,startLine,endLine,lineCount,hooks:[{name,category}],handlers[],isExported,isDefault}] · constants · hooks[{name,line,isRN,category}] · jsxComponents · comments · exports · rnPatterns · sections(길이=totalLines) · relations[{from,to,type,isAsync}] · totalLines · **error**`
+
+**`error`** — `{ message, line } | null`. 파싱 실패 시 사유가 담깁니다.
+⚠️ **`error` 가 있으면 나머지 필드는 "없다" 가 아니라 "못 셌다"** 는 뜻입니다.
+새 렌더러를 붙일 땐 **0 을 사실처럼 그리기 전에 이 필드를 먼저 볼 것.**
+실패해도 `sections` 길이 = `totalLines` 는 유지됩니다(하이라이트가 코드를 그려야 하므로).
+문장은 `core/parse-error.js` 한 곳에서 만듭니다 — 동작 분석기와 같은 말을 하기 위해.
 
 ### ⚡ 동작 엔진의 effect 객체 (내부용)
 `collect.js` 가 만드는 raw effect: `{ hook, deps, depRoots, trigger, line, body, owner }`
@@ -473,43 +508,11 @@ npx vite --port 5199 &
 ## 6. 다음 할 일
 
 A 트랙(1~4) · B · E · C · D · D-2 · C-2 · F · C-3 ·
-**라) 다지기** · **다-1) 핸들러 비동기** · **다-2) 핸들러 관문** 까지 완료·커밋됨.
+**라) 다지기** · **다-1) 핸들러 비동기** · **다-2) 핸들러 관문** ·
+**문법 오류 표시(잘린 코드의 "조용한 0" 제거)** 까지 완료·커밋됨.
 합의했던 (라)·(다)가 **둘 다 끝났습니다.** (가)·(나)는 중요도가 낮아 **버리기로 했습니다.**
 
-### 🚧 먼저 볼 것 — **잘린 코드에서 "조용한 0"** (문서 정리 중 발견, 2026-08-24)
-
-**이건 후보가 아니라 실제 문제입니다.**
-
-`91f1a13` 에서 `parser.js` 를 AST 로 재작성하면서, **잘린 코드에 대한 내성이 사라졌습니다.**
-예전 정규식 파서는 괄호가 안 닫혀도 훑었지만, 지금은 `parse()` 가 던지면
-`emptyResult(totalLines)` 를 돌려줍니다. 실측 결과 사용자에게는 이렇게 보입니다:
-
-| 탭 | 실제 화면 |
-| :--- | :--- |
-| 하이라이트 | 코드는 그려지나 섹션 밴드·배지 없음 |
-| 구조맵 | **완전히 빈 화면** (안내 없음) |
-| 메트릭 | 줄 수만 맞고 **나머지 전부 `0`** |
-| 플로우 | `컴포넌트 관계가 발견되지 않았습니다` |
-| 동작 | 오류 위치·사유를 정확히 표시 |
-
-**왜 문제인가** — 이 프로젝트의 설계 원칙은 *"조용히 틀린 결과를 내놓느니 실패 지점을
-정확히 알린다"* 입니다. 그런데 지금 ①~④ 는 **"세어 보니 없다" 와 "못 셌다" 를 똑같이 `0`**
-으로 보여 줍니다. 게다가 동작 탭 오류 문구 마지막 줄이
-**"다른 탭은 그대로 사용할 수 있습니다"** 인데 **이제 사실이 아닙니다**(`src/ui/behavior.js`).
-
-**고치는 방향 (합의 필요)**
-1. **최소** — 동작 탭의 저 문장을 사실에 맞게 고치고, `parseCode` 가 파싱 실패를
-   `ParseResult` 에 실어 보내 ①~④ 가 **"문법 오류로 분석하지 못했습니다"** 를 표시.
-   → 계약(`ParseResult`)에 필드 하나 추가. **틀린 말을 없애는 것이 핵심.**
-2. **더 나아가면** — 잘린 코드를 잘라내고 재시도하는 복구. 다만 `GUIDE_PRO.md` 6장에
-   적힌 이유(부분 복구를 완전한 분석으로 오인)로 **한 번 기각된 방향**임.
-
-**추천은 1번.** 문서(`GUIDE_BEGINNER.md` 7장 · `GUIDE_PRO.md` 6장)에는 현재 동작을
-있는 그대로 적어 두었으니, 코드를 고치면 두 문서의 "알려진 문제" 문단도 함께 지울 것.
-
----
-
-### ▶ 그다음: **아직 정하지 않음 — 먼저 합의할 것**
+### ▶ 다음: **아직 정하지 않음 — 먼저 합의할 것**
 
 이번 라운드에서 새로 드러난 것과, 남겨 둔 것들입니다.
 

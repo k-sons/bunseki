@@ -110,7 +110,22 @@ async function analyze() {
     // Render Highlight View
     highlightContainer = renderHighlightView(code, currentAnalysis, language)
     panelHighlight.innerHTML = ''
+    // 문법이 깨져 못 읽었으면 **먼저 그 사실부터** 말합니다.
+    // 코드 자체는 그대로 보여 줍니다 — 어디가 잘렸는지 눈으로 찾을 수 있게.
+    if (currentAnalysis.error) panelHighlight.appendChild(renderParseError(currentAnalysis.error))
     panelHighlight.appendChild(highlightContainer)
+
+    // 구조맵·메트릭·플로우는 셀 수 없었던 것을 0 으로 보여 주면 거짓말이 됩니다.
+    // 세 탭 모두 같은 안내로 바꾸고 여기서 끝냅니다.
+    if (currentAnalysis.error) {
+      for (const panel of [panelStructure, panelMetrics, panelFlow]) {
+        panel.innerHTML = ''
+        panel.appendChild(renderParseError(currentAnalysis.error))
+      }
+      activateTab('highlight')
+      analyzeBehavior(code)
+      return
+    }
 
     // Render Structure View
     const structureView = renderStructureView(currentAnalysis, (lineNum) => {
@@ -191,10 +206,48 @@ async function analyzeBehavior(code) {
 
 function updateStatusBar(analysis) {
   statusLines.textContent = `줄: ${analysis.totalLines}`
+
+  // 못 읽은 것을 0 으로 적으면 "세어 보니 없다" 로 읽힙니다. 셀 수 없었으면 그렇게 적습니다.
+  if (analysis.error) {
+    statusFunctions.textContent = '함수: —'
+    statusComponents.textContent = '컴포넌트: —'
+    statusHooks.textContent = 'Hook: —'
+    statusImports.textContent = 'Import: —'
+    return
+  }
+
   statusFunctions.textContent = `함수: ${analysis.functions.filter(f => f.type === 'function').length}`
   statusComponents.textContent = `컴포넌트: ${analysis.functions.filter(f => f.type === 'component').length}`
   statusHooks.textContent = `Hook: ${analysis.hooks.length}`
   statusImports.textContent = `Import: ${analysis.imports.length}`
+}
+
+/**
+ * 문법 오류 안내 — 구조맵·메트릭·플로우·하이라이트가 함께 씁니다.
+ *
+ * 예전에는 파싱이 실패하면 이 탭들이 **빈 화면이나 0** 을 보여 줬습니다.
+ * "세어 보니 없다" 와 "못 셌다" 가 화면에서 구분되지 않아, 조용히 틀린 결과를
+ * 내놓는 셈이었습니다. 이제 왜 비었는지를 먼저 말합니다.
+ */
+function renderParseError(error) {
+  const el = document.createElement('div')
+  el.className = 'parse-error'
+  el.innerHTML = `
+    <div class="parse-error__title">문법 오류로 코드를 읽지 못했습니다</div>
+    <div class="parse-error__msg"></div>
+    <div class="parse-error__line"></div>
+    <div class="parse-error__hint">
+      괄호나 태그가 닫히지 않으면 <strong>다섯 탭 모두</strong> 분석하지 못합니다.
+      컴포넌트를 통째로(여는 <code>function</code> 부터 닫는 <code>}</code> 까지) 붙여넣어 주세요.
+    </div>
+  `
+  // 코드에서 온 문자열은 textContent 로 넣습니다 — innerHTML 에 그대로 넣으면
+  // 오류 메시지에 섞인 <태그> 가 진짜 엘리먼트로 렌더됩니다.
+  el.querySelector('.parse-error__msg').textContent = error.message
+  const lineEl = el.querySelector('.parse-error__line')
+  if (error.line) lineEl.textContent = `L${error.line}`
+  else lineEl.remove()
+  return el
 }
 
 // ===== Tabs =====
