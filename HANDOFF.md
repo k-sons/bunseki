@@ -7,8 +7,8 @@
 
 ## 0. 새 세션이면 여기부터 (3분)
 
-1. `git log --oneline -5` — 마지막 커밋이 `75a06da` 인지 확인.
-2. `npm test` — **71 pass / 0 fail** 이면 출발점이 맞음.
+1. `git log --oneline -5` — 마지막 커밋이 `e20abb0` 인지 확인.
+2. `npm test` — **83 pass / 0 fail** 이면 출발점이 맞음.
 3. 이 문서 **3장(현재 상태)** 과 **6장(다음 할 일)** 만 보면 바로 이어서 작업 가능.
 4. 코드를 만지기 전, 손댈 파일이 4장 "계약" 3개 중 어디에 걸리는지 확인.
 
@@ -134,13 +134,36 @@
 - **성능은 문제 없음** — 2643줄에서 behavior 70ms · parser 71ms, 대략 선형.
 - 다른 렌더러(structure/metrics/flow)는 식별자만 끼워 넣어 `<` 가 새지 않음 — 손대지 않음.
 
+### (9) C) 조건부 실행 표시 — 커밋 `e20abb0`
+- 타임라인이 알약을 죽 늘어놓기만 해서, 첫 줄에서 되돌아 나가는 effect 도
+  **"언제나 끝까지 간다" 처럼** 보였음. 이른 반환 조건을 **관문(gate)** 으로 그립니다.
+- `timing.js`: **`findGates(body, code)`(신규)** — effect 본문 **최상위**의
+  `if (…) return|throw` 를 모아 `{ line, stop:'return'|'throw', cond }`.
+  `cond` 는 **원본 소스를 그대로 잘라** 씁니다(공백 정리 + 32자 잘림) →
+  `analyzeEffectsTiming(effects, states, code)` 로 **code 를 넘기게** 됨(`index.js` 한 줄).
+  - **곧바로 부르는 함수 한 겹까지** 들어감 — `(async () => {…})()` IIFE,
+    최상위에 선언하고 최상위에서 부르는 `load()`. 비동기 effect 의 흔한 형태라서.
+  - **관문으로 세지 않는 것**(헛경보 방지):
+    **await 뒤의 이른 반환**(`if (!alive) return` — 관문이 아니라 언마운트 가드,
+    이미 `🛡 가드됨` 으로 보임) · **나중에 불릴 콜백 안**(`setInterval(() => …)`) ·
+    **else 가 붙은 if** · 블록에 문장이 둘 이상인 if(`{ setX(); return }`).
+- 타임라인: `kind:'gate'` 스텝. 관문과 **즉시 setter 를 줄 번호로 세워** 코드에 적힌
+  차례대로 놓습니다 — 무엇 **앞에서** 멈추는지가 맞아야 하므로.
+- `analyzeBody` 에 **`inIf`** 추가 — 조건문 가지 안의 setter. `guarded` 와 달리
+  **이른 반환 뒤는 세지 않음**(관문 알약이 이미 말하므로 setter 마다 또 붙이면 시끄러움).
+  즉시 setter 스텝의 `conditional` 로 나가 `조건부` 꼬리표가 됨.
+- UI: `.timing-pill--gate` — 끊긴 테두리 + `↩` + 노란 계열(위험이 아니라 정보).
+  `title`/`aria-label` 로 "이 조건이 참이면 아래 단계는 실행되지 않습니다".
+- **⏱ 섹션에 나오는 조건은 바뀌지 않음** — 관문만 있는 동기 effect 는 여전히 생략.
+  관문은 문제가 아니라 흐름 설명이라, 그것 때문에 섹션을 늘리지 않았습니다.
+
 ---
 
 ## 3. 현재 상태 (스냅샷)
 
-- ✅ **작업트리 깨끗. 미커밋 없음.** `main` 최신 = `75a06da` (A 트랙 + B + E 완료).
-- ✅ `npm test` → **71 pass / 0 fail**
-  (parser 10 · behavior 10 · examples 3 · timing 18 · stale-deps 11 · interplay 19)
+- ✅ **작업트리 깨끗. 미커밋 없음.** `main` 최신 = `e20abb0` (A 트랙 + B + E + C 완료).
+- ✅ `npm test` → **83 pass / 0 fail**
+  (parser 10 · behavior 10 · examples 3 · timing 30 · stale-deps 11 · interplay 19)
 - ✅ `npx vite build` 정상. 초기 번들 59KB, `@babel/parser` 는 `lib` 청크(≈300KB)로 **지연 로드**.
 - ✅ 브라우저 실제 렌더 확인(headless Chrome + `test/browser-verify.html`):
   `⏱ 타이밍 · deps 점검 / 위험 1 / deps 빠짐 2`, `⚠ [userId] 빠짐?` 칩,
@@ -148,8 +171,11 @@
   대기 알약도 실제 폭으로: `Promise 대기 · 시간 미상 [132px]`, `await 대기 · ≈3초 [220px]`.
   이벤트 연쇄에도 `⏳ 응답 대기 · 시간 미상 [높이 42px]`, **라벨 HTML 주입 0건**,
   **가로 넘침 0px**(360/768/1280).
+  관문도 제자리에: `setLoading() → ↩ tab !== 'posts' 면 중단 → Promise 대기 → …`,
+  `↩ !id 면 중단 → await 대기 → 응답 도착 → setPosts() 🛡 가드됨`(= await 뒤 `!alive` 는
+  관문이 아니라 가드로 갔다는 확인).
 - ✅ 노이즈 점검: useMemo/useCallback/AbortController/ref 가 섞인 대시보드 컴포넌트에서
-  **오탐 0**(deps·interplay 모두), ESLint `exhaustive-deps` 와 같은 지점만 지적.
+  **오탐 0**(deps·interplay·gate 모두), ESLint `exhaustive-deps` 와 같은 지점만 지적.
 
 ---
 
@@ -168,7 +194,7 @@ src/
 │       ├── collect.js          # 상태/effect/핸들러/컴포넌트 수집 (walk 등 공용 헬퍼)
 │       ├── chain.js            # 이벤트→setter→상태→Effect 연쇄(Step 배열) + 대기 스텝
 │       ├── hooks.js            # 같은 파일 커스텀 훅 추적 + 스코프 경계
-│       ├── timing.js           # ⏱ 비동기 타이밍 + 언마운트 위험 + 참조 수집 + 대기 무게
+│       ├── timing.js           # ⏱ 비동기 타이밍 + 언마운트 위험 + 참조 수집 + 대기 무게 + 관문
 │       ├── deps.js             # ⚠ deps 에서 빠진 값 = stale closure
 │       └── interplay.js        # 🔗 Effect 사이 관계 = 루프/경합/연쇄
 ├── ui/
@@ -184,15 +210,20 @@ test/                           # node --test. *.test.mjs + browser-verify.html
 
 ### ⚡ 동작 엔진의 effect 객체 (내부용)
 `collect.js` 가 만드는 raw effect: `{ hook, deps, depRoots, trigger, line, body, owner }`
-→ `timing.js` 가 소비해(setter 마다 `deferred`/`guarded`/`nested`)
+→ `timing.js` 가 소비해(setter 마다 `deferred`/`guarded`/`nested`/`inIf`)
 `{ line, hook, trigger, deps, viaHook, isAsync, asyncKind,
-hasCleanup, hasGuard, risk, staleDeps, setters[], timeline[] }` 로 바꿔 UI 에 넘김.
+hasCleanup, hasGuard, risk, staleDeps, gates[], setters[], timeline[] }` 로 바꿔 UI 에 넘김.
 **`owner`(AST 노드)는 UI 로 새어 나가지 않음** — timing 결과에는 담기지 않는다.
+`analyzeEffectsTiming(effects, states, code)` — **세 번째 인자는 원본 소스**.
+관문의 조건식을 그대로 잘라 보여주는 데만 쓰고, 없으면 `조건` 으로 적는다.
 
 ### ⏱ 타임라인 스텝 (UI 계약)
-`kind: 'trigger'|'effect'|'setter'|'async-wait'|'resolve'|'rerender'|'cleanup'|'risk'|'stale'`
+`kind: 'trigger'|'effect'|'setter'|'gate'|'async-wait'|'resolve'|'rerender'|'cleanup'|'risk'|'stale'`
 UI 는 `trigger·risk·stale` 을 뺀 나머지를 순서대로 알약으로 그린다.
 `async-wait` 만 `weight`(2~12) 를 갖고, UI 가 그 값으로 **폭**을 정한다 — 실제 ms 가 아니라 눈금.
+`gate` 는 `{ label, note, line }` — 조건이 참이면 **아래 단계로 가지 않는다**는 뜻.
+즉시 setter 와 함께 **줄 번호 순서로** 놓이므로, UI 는 순서를 다시 만지지 않는다.
+`phase:'sync'` setter 의 `conditional` 은 "조건문 가지 안" 이라는 뜻(`조건부` 꼬리표).
 
 ### 🔗 이벤트 연쇄 스텝 (UI 계약)
 `kind: 'event'|'call'|'setter'|'effect'|'wait'|'rerender'|'boundary'`
@@ -227,15 +258,19 @@ npx vite --port 5199 &
 
 ## 6. 다음 할 일
 
-A 트랙(1~4) · **B) 이벤트 연쇄 대기 구간** · **E) 다지기** 까지 완료·커밋됨.
-다음 방향은 정해지지 않았으니 **사용자와 먼저 합의할 것.** 남은 후보:
+A 트랙(1~4) · **B) 이벤트 연쇄 대기 구간** · **E) 다지기** · **C) 조건부 실행 표시** 까지
+완료·커밋됨. 다음 방향은 정해지지 않았으니 **사용자와 먼저 합의할 것.** 남은 후보:
 
-- **C) 조건부 실행 표시** — `if (tab !== 'posts') return` 같은 이른 반환·조건 가드를
-  타임라인에 "여기서 멈출 수 있음" 으로 그리기.
-  (재료는 이미 있음: `isEarlyReturnGuard()` · setter 의 `guarded` 플래그.)
 - **D) 커스텀 훅 경계 시각화** — `viaHook` 배지는 있지만 훅 안팎의 상태 흐름이 한눈에 안 보임.
 - **F) `.catch(setError)` 계열** — 지금은 `.then` 만 setter 로 셈. `.catch`/`.finally` 로
   넘긴 setter 는 놓침(의도된 false negative). 넓힐지는 판단 필요.
+- **C-2) 이벤트 연쇄에도 관문** — B 에서 대기 구간을 맞췄듯, 위쪽 이벤트 연쇄의
+  `Effect 재실행` 스텝에도 관문을 끼워 두 섹션을 맞출 수 있음.
+  (`findGates` 를 export 하면 `chain.js` 가 `describeWait` 처럼 가져다 쓰면 됨.
+  다만 연쇄에는 `code` 가 흐르지 않아 조건식 원문을 넘길 길을 하나 더 뚫어야 함.)
+- **C-3) 관문의 사각지대** — `if (x) { setY(); return }` 처럼 **블록에 문장이 둘 이상**인
+  이른 반환은 지금 관문으로 안 셈(`isEarlyReturnGuard` 가 문장 1개만 봄).
+  넓히면 `guarded` 판정까지 함께 넓어지므로 위험 오탐을 먼저 확인할 것.
 
 작업 방식(확립됨): **작게 구현 → 테스트 추가 → `npm test` → 브라우저 실제 렌더 확인 → 커밋.**
 그리고 마지막에 **이 문서를 갱신**하고 커밋.
@@ -259,6 +294,7 @@ A 트랙(1~4) · **B) 이벤트 연쇄 대기 구간** · **E) 다지기** 까�
   규칙을 넓힐 땐 `test/stale-deps.test.mjs` 의 "잡으면 안 되는 것" 6개와
   `test/interplay.test.mjs` 의 "잡으면 안 되는 것" 3개 +
   `test/timing.test.mjs` 의 "await 밖의 타이머는 대기 시간으로 세지 않는다" ·
-  "else 가 붙으면 이른 반환이 아니라 갈림길이다" +
+  "else 가 붙으면 이른 반환이 아니라 갈림길이다" ·
+  **"관문으로 잡으면 안 되는 것" 3개**(await 뒤 · 나중에 불릴 콜백 안 · else 붙은 if) +
   "deps 배열이 없는 Effect" 절의 안 잡는 케이스 4개를 먼저 확인.
 - 임시 검증 파일은 repo 밖(세션 scratchpad)에 만들 것. 작업트리는 깨끗하게 유지.
