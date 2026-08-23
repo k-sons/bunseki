@@ -218,6 +218,33 @@ export default function Panel({ tab, id }) {
   log('관문 알약: ' + gatePills.length + '개 / 설명 붙은 것 ' +
     gatePills.filter(p => p.getAttribute('aria-label')).length + '개')
 
+  // ⚡ 오류 경로 — .catch / .finally 가 응답 뒤 제자리에 그려지는지 봅니다
+  const errCode = `import { useState, useEffect } from 'react'
+
+export default function Loader({ id }) {
+  const [tab, setTab] = useState('a')
+  const [data, setData] = useState(null)
+  const [error, setError] = useState(null)
+  const [loading, setLoading] = useState(false)
+  useEffect(() => {
+    setLoading(true)
+    fetchIt(tab).then(setData).catch(setError).finally(() => setLoading(false))
+  }, [tab])
+  return <button onClick={() => setTab('b')}>{data}</button>
+}
+`
+  const beErr = renderBehaviorView(parseBehavior(errCode), () => {})
+  document.body.appendChild(beErr)
+  const errTrack = beErr.querySelector('.timing-track')
+  log('오류 경로 ⏱: ' + [...errTrack.querySelectorAll('.timing-pill')]
+    .map(p => p.textContent.replace(/\s+/g, ' ').trim()).join('  ·  '))
+  log('  오류 꼬리표: ' + [...beErr.querySelectorAll('.timing-pill__when')]
+    .map(n => n.textContent.trim()).join(', ') + ' (setError 에만 붙어야 함)')
+  // 대기 스텝은 .behavior-wait 이라 함께 골라야 응답 전/후가 제대로 보입니다
+  const errSteps = [...beErr.querySelectorAll('.behavior-detail .behavior-step, .behavior-detail .behavior-wait')]
+    .map(s => (s.querySelector('.behavior-step__label') || s).textContent.replace(/\s+/g, ' ').trim())
+  log('  연쇄: ' + errSteps.join('  →  '))
+
   // 🪝 커스텀 훅 경계 — 흐름이 훅 안으로 들어갔다 나오는 구역이 그려지는지 봅니다
   const hookCode = `import { useState, useEffect } from 'react'
 

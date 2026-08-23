@@ -393,3 +393,119 @@ test('관문 뒤에 온 setter 는 조건부로 또 표시하지 않는다', () 
   const step = e.timeline.find(s => s.kind === 'setter' && s.label === 'setLoading()')
   assert.equal(step.conditional, false)
 })
+
+
+/* ── Promise 사슬의 나머지 — .catch / .finally ─────────────────────────────
+ *
+ * `.then` 만 세면 가장 흔한 한 줄이 거꾸로 그려집니다:
+ *   fetchIt().then(setData).catch(setError).finally(() => setLoading(false))
+ * → setError 는 통째로 사라지고, 로딩을 끄는 자리가 응답 **전** 으로 갑니다.
+ */
+
+const wrapErr = (bodyEffect) => `import { useState, useEffect } from 'react'
+export default function E({ id }) {
+  const [data, setData] = useState(null)
+  const [error, setError] = useState(null)
+  const [loading, setLoading] = useState(false)
+${bodyEffect}
+  return <div>{data}</div>
+}`
+
+const errTiming = (code) =>
+  parseBehavior(wrapErr(code)).components.find(c => c.name === 'E').timing.find(e => e.isAsync)
+
+/** 타임라인에서 '응답 도착' 뒤에 오는 setter 스텝만 */
+const afterResolve = (e) => {
+  const i = e.timeline.findIndex(s => s.kind === 'resolve')
+  return e.timeline.slice(i + 1).filter(s => s.kind === 'setter')
+}
+
+test('.catch(setError) 도 응답 뒤에 불리는 setter 로 센다', () => {
+  const e = errTiming(`  useEffect(() => {
+    fetchIt(id).then(setData).catch(setError)
+  }, [id])`)
+  const names = afterResolve(e).map(s => s.label)
+  assert.deepEqual(names, ['setData()', 'setError()'])
+  assert.ok(e.setters.some(s => s.name === 'setError' && s.deferred))
+})
+
+test('.finally 의 setter 는 응답 뒤로 간다 — 로딩 끄는 자리가 앞으로 오면 거꾸로다', () => {
+  const e = errTiming(`  useEffect(() => {
+    setLoading(true)
+    fetchIt(id).then(setData).catch(setError).finally(() => setLoading(false))
+  }, [id])`)
+  const before = e.timeline
+    .slice(0, e.timeline.findIndex(s => s.kind === 'async-wait'))
+    .filter(s => s.kind === 'setter')
+  assert.deepEqual(before.map(s => s.label), ['setLoading()'], '응답 전 setLoading 은 한 번뿐')
+  assert.deepEqual(
+    afterResolve(e).map(s => s.label),
+    ['setData()', 'setError()', 'setLoading()'],
+    '끄는 자리는 응답 뒤'
+  )
+})
+
+test('.catch 만 있어도 Promise 사슬이라 기다리는 구간이 있다', () => {
+  const e = errTiming(`  useEffect(() => {
+    fetchIt(id).catch(setError)
+  }, [id])`)
+  assert.ok(e, '비동기 effect 로 인식되어야 한다')
+  assert.equal(e.asyncKind, '.then')
+  assert.ok(e.timeline.some(s => s.kind === 'async-wait'))
+})
+
+test('에러일 때만 불리는 setter 에는 오류 표시가 붙는다', () => {
+  const e = errTiming(`  useEffect(() => {
+    fetchIt(id).then(setData).catch(setError)
+  }, [id])`)
+  const byName = Object.fromEntries(afterResolve(e).map(s => [s.label, s]))
+  assert.equal(byName['setError()'].onError, true)
+  assert.equal(byName['setData()'].onError, false, '성공 쪽에는 붙지 않는다')
+})
+
+test('.finally 는 성공·실패 양쪽에서 불리므로 오류 표시가 아니다', () => {
+  const e = errTiming(`  useEffect(() => {
+    fetchIt(id).then(setData).finally(() => setLoading(false))
+  }, [id])`)
+  const step = afterResolve(e).find(s => s.label === 'setLoading()')
+  assert.equal(step.onError, false)
+})
+
+test('.then(onOk, onErr) 는 둘째 인자만 오류 경로다', () => {
+  const e = errTiming(`  useEffect(() => {
+    fetchIt(id).then(setData, setError)
+  }, [id])`)
+  const byName = Object.fromEntries(afterResolve(e).map(s => [s.label, s]))
+  assert.equal(byName['setData()'].onError, false)
+  assert.equal(byName['setError()'].onError, true)
+})
+
+test('try/catch 의 catch 절도 .catch 와 같은 오류 경로다', () => {
+  const e = errTiming(`  useEffect(() => {
+    (async () => {
+      try { const d = await fetchIt(id); setData(d) }
+      catch (err) { setError(err) }
+      finally { setLoading(false) }
+    })()
+  }, [id])`)
+  const byName = Object.fromEntries(afterResolve(e).map(s => [s.label, s]))
+  assert.equal(byName['setError()'].onError, true)
+  assert.equal(byName['setData()'].onError, false)
+  assert.equal(byName['setLoading()'].onError, false, 'finally 절은 양쪽에서 불린다')
+})
+
+test('.catch 의 setState 도 가드가 없으면 언마운트 위험이다', () => {
+  const e = errTiming(`  useEffect(() => {
+    fetchIt(id).catch(setError)
+  }, [id])`)
+  assert.equal(e.risk, 'unmount-setstate')
+})
+
+test('.catch 안에서도 가드가 있으면 위험이 아니다', () => {
+  const e = errTiming(`  useEffect(() => {
+    let alive = true
+    fetchIt(id).catch((err) => { if (alive) setError(err) })
+    return () => { alive = false }
+  }, [id])`)
+  assert.equal(e.risk, null)
+})

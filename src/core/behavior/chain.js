@@ -354,7 +354,8 @@ function appendEffectSteps({ steps, state, effects, setterToState, setterHook, s
         hook: via ? via.name : inHook,
         hookLine: via ? via.line : inHookLine,
         hookInternal: via ? via.internal : null,
-        badges: [],
+        // 응답 뒤 자리 중에서도 **에러일 때만** 가는 길 — ⏱ 타임라인과 같은 표시
+        badges: phase && phase.errorOnly.has(s) ? ['오류 시'] : [],
       })
 
       // 이 상태가 또 다른 Effect 를 트리거하는지 따라갑니다

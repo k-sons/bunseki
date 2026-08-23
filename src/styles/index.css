@@ -1664,6 +1664,13 @@ body {
   opacity: 0.85;
 }
 
+/* 에러일 때만 가는 길 — 위험이 아니라 "늘 불리지는 않는다" 는 뜻이라 붉은 계열은 피합니다 */
+.timing-pill__when {
+  font-size: 0.58rem;
+  opacity: 0.9;
+  color: hsl(25, 75%, 62%);
+}
+
 /* 🔗 관계 알약 — 이 Effect 가 사는 커스텀 훅 (연쇄의 훅 구역과 같은 색) */
 .timing-pill__hook {
   font-size: 0.58rem;

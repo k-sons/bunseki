@@ -310,3 +310,45 @@ export default function Panel() {
 
   assert.ok(!steps.some(s => s.kind === 'gate'))
 })
+
+
+/* ── 연쇄의 오류 경로 — ⏱ 타임라인과 같은 표시 ───────────────────────────── */
+
+test('연쇄에서도 에러일 때만 바뀌는 상태에 오류 표시가 붙는다', () => {
+  const { steps } = gateFlow(`import { useState, useEffect } from 'react'
+
+export default function Panel() {
+  const [tab, setTab] = useState('a')
+  const [list, setList] = useState([])
+  const [error, setError] = useState(null)
+  useEffect(() => {
+    fetchPosts(tab).then(setList).catch(setError)
+  }, [tab])
+  return <button onClick={() => setTab('posts')}>t</button>
+}
+`)
+
+  const byLabel = Object.fromEntries(
+    steps.filter(s => s.kind === 'setter').map(s => [s.label, s])
+  )
+  assert.deepEqual(byLabel['setError()'].badges, ['오류 시'])
+  assert.deepEqual(byLabel['setList()'].badges, [], '성공 쪽에는 붙지 않는다')
+})
+
+test('성공 쪽에서도 불리는 이름에는 오류 표시가 붙지 않는다', () => {
+  // .finally 처럼 양쪽에서 불리는 자리는 "늘 불린다" 가 사실입니다.
+  const { steps } = gateFlow(`import { useState, useEffect } from 'react'
+
+export default function Panel() {
+  const [tab, setTab] = useState('a')
+  const [list, setList] = useState([])
+  useEffect(() => {
+    fetchPosts(tab).then(setList).catch(() => setList([]))
+  }, [tab])
+  return <button onClick={() => setTab('posts')}>t</button>
+}
+`)
+
+  const setList = steps.find(s => s.kind === 'setter' && s.label === 'setList()')
+  assert.deepEqual(setList.badges, [])
+})

@@ -270,7 +270,12 @@ function renderTimingPill(step, onNavigate) {
       : step.conditional
         ? '<span class="timing-pill__guard">조건부</span>'
         : ''
-  pill.innerHTML = `<span class="timing-pill__label">${esc(step.label)}${detail}</span>${guard}`
+  // 응답 뒤라도 **에러일 때만** 가는 길이 있습니다 (.catch · try/catch).
+  // 가드 꼬리표와 묻는 것이 달라("늘 불리나" vs "가드가 있나") 따로 답니다.
+  const when = step.kind === 'setter' && step.onError
+    ? '<span class="timing-pill__when">오류 시</span>'
+    : ''
+  pill.innerHTML = `<span class="timing-pill__label">${esc(step.label)}${detail}</span>${when}${guard}`
   if (step.kind === 'async-wait') pill.setAttribute('aria-label', `${step.label} — ${step.detail}`)
 
   // 관문 — 조건이 참이면 아래 단계로 가지 않는다는 뜻입니다.

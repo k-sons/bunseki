@@ -46,17 +46,18 @@ function analyzeOne(effect, setterNames, setterToState, code) {
   const body = effect.body
 
   // ── 비동기 여부 ──
-  let hasAwait = false, hasThen = false, hasFetch = false
+  let hasAwait = false, hasChain = false, hasFetch = false
   walk(body, (n) => {
     if (n.type === 'AwaitExpression') hasAwait = true
     if (n.type === 'CallExpression') {
       const name = calleeName(n)
-      if (name === 'then') hasThen = true
+      if (PROMISE_METHODS.has(name)) hasChain = true
       if (name === 'fetch') hasFetch = true
     }
   })
-  const isAsync = hasAwait || hasThen || hasFetch
-  const asyncKind = hasAwait ? 'await' : hasThen ? '.then' : hasFetch ? 'fetch' : null
+  const isAsync = hasAwait || hasChain || hasFetch
+  // `.catch`/`.finally` 만 있어도 Promise 사슬이라 기다리는 구간은 똑같습니다.
+  const asyncKind = hasAwait ? 'await' : hasChain ? '.then' : hasFetch ? 'fetch' : null
 
   // ── setter 들을 실행 시점(즉시 / 비동기 이후)과 가드 여부로 분류 ──
   //    같은 훑기로 effect 가 읽는 이름(refs)도 모읍니다 — deps 대조에 씁니다.
@@ -108,6 +109,13 @@ function analyzeOne(effect, setterNames, setterToState, code) {
   }
 }
 
+/**
+ * Promise 사슬 메서드 — 콜백이 **응답 이후**에 불립니다.
+ * `.then` 만 세면 `fetch().catch(setError)` 처럼 흔한 줄이 통째로 비어 보이고,
+ * `.finally(() => setLoading(false))` 는 응답 *전* 에 끄는 것처럼 거꾸로 그려집니다.
+ */
+const PROMISE_METHODS = new Set(['then', 'catch', 'finally'])
+
 /** 훑을 때 들어가지 않는 가지 — 위치 정보와 타입 표기는 실행되는 코드가 아닙니다 */
 const SKIP_KEYS = new Set([
   'loc', 'leadingComments', 'trailingComments',
@@ -122,6 +130,9 @@ const SKIP_KEYS = new Set([
  *             - guarded : if 문 안에 감싸여 있는가 (`if (alive) setX()` 류)
  *             - nested  : 중첩 함수 안에서 불리는가 (`setInterval(() => setX())` 류).
  *                         effect 가 도는 그 순간에 실행되는 것이 아니라 나중에 불립니다.
+ *             - onError : **에러일 때만** 불리는 자리인가 (`.catch(cb)` · `try/catch` ·
+ *                         `.then(onOk, onErr)` 의 두 번째 인자). 실행되는 시점은
+ *                         응답 뒤로 같지만, **늘 불리는 것은 아니라는** 뜻입니다.
  *             - inIf    : **조건문 가지 안**에 있는가. `guarded` 와 달리 이른 반환
  *                         뒤에 온 것은 세지 않습니다 — 그건 관문(gate)으로 따로 보여
  *                         주므로, 뒤따르는 setter 마다 "조건부" 를 또 붙이면 시끄럽습니다.
@@ -136,10 +147,10 @@ function analyzeBody(effectBody, setterNames) {
   const found = []
   const refs = []
 
-  function visit(node, deferred, guarded, nested, inIf) {
+  function visit(node, deferred, guarded, nested, inIf, onError) {
     if (!node || typeof node !== 'object') return
     if (Array.isArray(node)) {
-      for (const n of node) visit(n, deferred, guarded, nested, inIf)
+      for (const n of node) visit(n, deferred, guarded, nested, inIf, onError)
       return
     }
     if (typeof node.type !== 'string') return
@@ -150,13 +161,20 @@ function analyzeBody(effectBody, setterNames) {
       case 'ArrowFunctionExpression':
         // 중첩 함수: 그 함수 본문을 순서대로 다시 훑습니다.
         //            여기서부터의 setter 는 effect 실행 중이 아니라 나중에 불릴 수 있습니다.
-        visitFunctionBody(node, deferred, guarded, true, inIf)
+        visitFunctionBody(node, deferred, guarded, true, inIf, onError)
         return
 
       case 'IfStatement':
-        visit(node.test, deferred, guarded, nested, inIf)
-        visit(node.consequent, deferred, true, nested, true)
-        if (node.alternate) visit(node.alternate, deferred, true, nested, true)
+        visit(node.test, deferred, guarded, nested, inIf, onError)
+        visit(node.consequent, deferred, true, nested, true, onError)
+        if (node.alternate) visit(node.alternate, deferred, true, nested, true, onError)
+        return
+
+      case 'CatchClause':
+        // try/catch 의 catch 절도 `.catch(cb)` 와 같은 자리 — 에러일 때만 실행됩니다.
+        // 잡은 오류의 이름(`catch (err)`)은 **읽는 값이 아니라 새로 묶는 이름**이라
+        // refs 에 넣지 않습니다 — 같은 이름의 상태가 있으면 deps 헛경보가 됩니다.
+        visit(node.body, deferred, guarded, nested, inIf, true)
         return
 
       case 'Identifier':
@@ -167,42 +185,49 @@ function analyzeBody(effectBody, setterNames) {
       case 'MemberExpression':
       case 'OptionalMemberExpression':
         // user.id → 읽는 값은 user 뿐, id 는 속성 이름입니다.
-        visit(node.object, deferred, guarded, nested, inIf)
-        if (node.computed) visit(node.property, deferred, guarded, nested, inIf)
+        visit(node.object, deferred, guarded, nested, inIf, onError)
+        if (node.computed) visit(node.property, deferred, guarded, nested, inIf, onError)
         return
 
       case 'ObjectProperty':
       case 'Property':
-        if (node.computed) visit(node.key, deferred, guarded, nested, inIf)
-        visit(node.value, deferred, guarded, nested, inIf)
+        if (node.computed) visit(node.key, deferred, guarded, nested, inIf, onError)
+        visit(node.value, deferred, guarded, nested, inIf, onError)
         return
 
       case 'ObjectMethod':
-        if (node.computed) visit(node.key, deferred, guarded, nested, inIf)
-        visitFunctionBody(node, deferred, guarded, true, inIf)
+        if (node.computed) visit(node.key, deferred, guarded, nested, inIf, onError)
+        visitFunctionBody(node, deferred, guarded, true, inIf, onError)
         return
 
       case 'CallExpression':
       case 'OptionalCallExpression': {
-        // .then(cb): 콜백은 응답 이후에 실행됩니다 → deferred
-        if (calleeName(node) === 'then') {
-          visit(node.callee, deferred, guarded, nested, inIf)
-          for (const arg of node.arguments) {
+        // .then / .catch / .finally — 콜백은 셋 다 **응답 이후**에 실행됩니다 → deferred
+        const method = calleeName(node)
+        if (PROMISE_METHODS.has(method)) {
+          visit(node.callee, deferred, guarded, nested, inIf, onError)
+          node.arguments.forEach((arg, i) => {
+            // 에러일 때만 불리는 자리 — `.catch(cb)` 와 `.then(onOk, onErr)` 의 둘째 인자.
+            // `.finally` 는 성공·실패 양쪽에서 불리므로 여기 넣지 않습니다.
+            const errPath = onError || method === 'catch' || (method === 'then' && i === 1)
             if (isFunctionNode(arg)) {
-              visitFunctionBody(arg, true, guarded, true, inIf)
+              visitFunctionBody(arg, true, guarded, true, inIf, errPath)
             } else if (arg.type === 'Identifier' && setterNames.includes(arg.name)) {
-              // .then(setUser) — 값을 읽는 자리가 아니라, 응답이 오면 그대로 불립니다.
-              // 콜백으로 감싼 .then((u) => setUser(u)) 과 같은 뜻이므로 같게 셉니다.
-              found.push({ name: arg.name, line: lineOf(arg), deferred: true, guarded, nested: true, inIf })
+              // .then(setUser) · .catch(setError) — 값을 읽는 자리가 아니라,
+              // 응답이 오면 그대로 불립니다. 콜백으로 감싼 것과 같은 뜻이라 같게 셉니다.
+              found.push({
+                name: arg.name, line: lineOf(arg),
+                deferred: true, guarded, nested: true, inIf, onError: errPath,
+              })
             } else {
-              visit(arg, deferred, guarded, nested, inIf)
+              visit(arg, deferred, guarded, nested, inIf, onError)
             }
-          }
+          })
           return
         }
         // setter 직접 호출
         if (node.callee && node.callee.type === 'Identifier' && setterNames.includes(node.callee.name)) {
-          found.push({ name: node.callee.name, line: lineOf(node), deferred, guarded, nested, inIf })
+          found.push({ name: node.callee.name, line: lineOf(node), deferred, guarded, nested, inIf, onError })
         }
         break
       }
@@ -210,11 +235,11 @@ function analyzeBody(effectBody, setterNames) {
 
     for (const key of Object.keys(node)) {
       if (SKIP_KEYS.has(key)) continue
-      visit(node[key], deferred, guarded, nested, inIf)
+      visit(node[key], deferred, guarded, nested, inIf, onError)
     }
   }
 
-  function visitFunctionBody(fnNode, deferredEntry, guarded, nested, inIf) {
+  function visitFunctionBody(fnNode, deferredEntry, guarded, nested, inIf, onError) {
     const body = fnNode.body
     if (!body) return
     if (body.type === 'BlockStatement') {
@@ -222,7 +247,7 @@ function analyzeBody(effectBody, setterNames) {
       let guardedHere = guarded
       for (const stmt of body.body) {
         const awaitHere = containsDirectAwait(stmt)
-        visit(stmt, deferred || awaitHere, guardedHere, nested, inIf)
+        visit(stmt, deferred || awaitHere, guardedHere, nested, inIf, onError)
         if (awaitHere) deferred = true
         // if (!alive) return — 이 뒤의 문장은 조건이 참일 때만 실행됩니다.
         // if (alive) { … } 로 감싼 것과 같은 보호라 똑같이 가드로 봅니다.
@@ -231,11 +256,11 @@ function analyzeBody(effectBody, setterNames) {
       }
     } else {
       // 화살표 축약형 (본문이 식)
-      visit(body, deferredEntry || containsDirectAwait(body), guarded, nested, inIf)
+      visit(body, deferredEntry || containsDirectAwait(body), guarded, nested, inIf, onError)
     }
   }
 
-  visitFunctionBody(effectBody, false, false, false, false)
+  visitFunctionBody(effectBody, false, false, false, false, false)
   return { setters: found, refs }
 }
 
@@ -467,6 +492,8 @@ function buildTimeline({ effect, isAsync, asyncKind, immediate, deferred, hasCle
         label: `${s.name}()`,
         detail: setterToState[s.name] ? `→ ${setterToState[s.name]}` : null,
         guarded: s.guarded,
+        // 응답 뒤라는 점은 같지만 **늘 불리는 것은 아닌** 자리입니다 (.catch · try/catch)
+        onError: !!s.onError,
         line: s.line,
       })
     }
@@ -557,8 +584,9 @@ export function describeWait(body) {
 
 /**
  * 이벤트 연쇄(chain.js)도 같은 눈금을 쓰도록, effect 본문을 응답 전/후로 갈라 줍니다.
- *   deferred — 응답이 온 뒤에야 불리는 setter 이름들
- *   wait     — 그 사이 기다리는 구간의 무게/표기 (describeWait 와 같은 값)
+ *   deferred  — 응답이 온 뒤에야 불리는 setter 이름들
+ *   errorOnly — 그중 **에러일 때만** 불리는 이름들 (.catch · try/catch)
+ *   wait      — 그 사이 기다리는 구간의 무게/표기 (describeWait 와 같은 값)
  */
 export function describeAsyncPhase(body, setterNames) {
   const { setters } = analyzeBody(body, setterNames)
@@ -569,6 +597,14 @@ export function describeAsyncPhase(body, setterNames) {
     // 그럴 땐 "응답 전" 으로 봅니다 — 이벤트 직후 곧바로 한 번 바뀌는 것이 사실이니까.
     deferred: new Set(
       setters.filter(s => s.deferred && !immediate.has(s.name)).map(s => s.name)
+    ),
+    // 연쇄도 이름 단위라, **에러 경로에서만** 바뀌는 상태만 오류 표시를 답니다.
+    // 성공 쪽에서도 한 번 불리는 이름이면 "늘 불린다" 가 사실이므로 붙이지 않습니다.
+    errorOnly: new Set(
+      setters
+        .filter(s => s.deferred && s.onError && !immediate.has(s.name))
+        .map(s => s.name)
+        .filter(name => setters.every(s => s.name !== name || !s.deferred || s.onError))
     ),
     wait: describeWait(body),
   }

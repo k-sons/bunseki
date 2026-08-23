@@ -133,3 +133,21 @@ test('타임라인에 stale 스텝이 실려 UI 가 그대로 그릴 수 있다'
   assert.match(step.label, /id/)
   assert.ok(step.note.length > 0)
 })
+
+
+test('잡은 오류의 이름은 같은 이름의 상태가 있어도 빠진 deps 가 아니다', () => {
+  // catch (error) 의 error 는 그 자리에서 새로 묶는 이름입니다 — 읽는 값이 아닙니다.
+  const code = `import { useState, useEffect } from 'react'
+export default function C({ id }) {
+  const [error, setError] = useState(null)
+  useEffect(() => {
+    (async () => {
+      try { await fetchIt(id) }
+      catch (error) { setError(error) }
+    })()
+  }, [id])
+  return <div>{error}</div>
+}`
+  const e = parseBehavior(code).components[0].timing[0]
+  assert.deepEqual(e.staleDeps.map(d => d.name), [])
+})
