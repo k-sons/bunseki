@@ -274,6 +274,25 @@ export default function Panel() {
 
 /* --- 잡으면 안 되는 것 (⏱ 와 같은 기준) --- */
 
+test('나가는 길에 뭔가 하고 나가는 이른 반환도 연쇄에서 관문이다', () => {
+  // 두 섹션이 같은 findGates 를 쓰므로 규칙을 넓히면 여기도 함께 넓어집니다
+  const { steps } = gateFlow(`import { useState, useEffect } from 'react'
+
+export default function Panel() {
+  const [tab, setTab] = useState('a')
+  useEffect(() => {
+    if (tab !== 'posts') { reset(); return }
+    fetchPosts(tab).then(setList)
+  }, [tab])
+  return <button onClick={() => setTab('posts')}>t</button>
+}
+`)
+
+  const i = steps.findIndex(s => s.kind === 'effect')
+  assert.equal(steps[i + 1].kind, 'gate')
+  assert.equal(steps[i + 1].label, "tab !== 'posts' 면 중단")
+})
+
 test('await 뒤의 이른 반환은 연쇄에서도 관문이 아니다', () => {
   // 실행을 막는 관문이 아니라 응답이 온 뒤의 언마운트 가드입니다
   const { steps } = gateFlow(`import { useState, useEffect } from 'react'

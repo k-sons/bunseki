@@ -324,6 +324,60 @@ test('관문은 코드에 적힌 차례대로, 즉시 setter 와 섞여 놓인�
   assert.deepEqual(kinds, ['setter', 'gate', 'setter'], 'setLoading → 관문 → setUser')
 })
 
+/* ── 나가는 길에 뭔가 하고 나가는 이른 반환 ─────────────────────────────────
+ * 흐름을 끝내는 건 블록의 **마지막** 문장입니다. 앞에 문장이 몇 개 더 있어도
+ * 그 뒤는 여전히 조건이 거짓일 때만 실행됩니다.
+ */
+
+test('블록에 문장이 여럿이어도 마지막이 return 이면 관문이다', () => {
+  const t = timingOf(`  useEffect(() => {
+    if (!id) { reset(); return }
+    fetchPosts(id).then(setPosts)
+  }, [id])`)
+  const e = firstAsync(t)
+  assert.equal(e.gates.length, 1, '나가는 길에 reset() 을 부른다고 관문이 아닌 게 아니다')
+  assert.equal(e.gates[0].cond, '!id')
+  assert.equal(e.gates[0].stop, 'return')
+  assert.equal(gateSteps(e)[0].label, '!id 면 중단')
+})
+
+test('마지막 문장이 throw 면 중단이 아니라 오류로 적는다', () => {
+  // 첫 문장만 보면 log() 를 보고 "중단" 으로 잘못 적습니다.
+  const t = timingOf(`  useEffect(() => {
+    if (!id) { log('no id'); throw new Error('id required') }
+    fetchUser(id).then(setUser)
+  }, [id])`)
+  const e = firstAsync(t)
+  assert.equal(e.gates.length, 1)
+  assert.equal(e.gates[0].stop, 'throw')
+  assert.equal(gateSteps(e)[0].label, '!id 면 오류')
+})
+
+test('마지막 문장이 return 이 아니면 관문이 아니다', () => {
+  const g = gatesOf(`  useEffect(() => {
+    if (!id) { return; }
+    if (stale) { cleanup(); log('done') }
+    fetchUser(id).then(setUser)
+  }, [id])`)
+  assert.equal(g.length, 1, '나가지 않는 if 는 그냥 조건문일 뿐이다')
+  assert.equal(g[0].cond, '!id')
+})
+
+test('문장이 여럿인 이른 반환 뒤의 setState 도 가드된 것으로 본다', () => {
+  const t = timingOf(`  useEffect(() => {
+    let alive = true
+    fetchUser(id).then((u) => {
+      if (!alive) { cleanup(); return }
+      setUser(u)
+    })
+    return () => { alive = false }
+  }, [id])`)
+  const e = firstAsync(t)
+  assert.equal(e.risk, null, '실제로 지켜지고 있으므로 헛경보다')
+  assert.ok(e.setters.filter(s => s.deferred).every(s => s.guarded))
+})
+
+
 /* ── 관문으로 잡으면 안 되는 것 (헛경보 방지) ─────────────────────────────── */
 
 test('await 뒤의 if (!alive) return 은 관문이 아니라 언마운트 가드다', () => {

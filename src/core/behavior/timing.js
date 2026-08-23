@@ -267,18 +267,27 @@ function analyzeBody(effectBody, setterNames) {
 /**
  * `if (…) return` / `if (…) throw` — 뒤의 문장을 지키는 이른 반환 가드인가.
  *
+ * 블록 안에 문장이 몇 개든 **마지막이 return/throw 면** 그 뒤는 조건이 거짓일 때만
+ * 실행됩니다 — 앞의 문장들은 나가는 길에 하는 일일 뿐이라 개수는 상관이 없습니다.
+ *
+ *   if (!id) { reset(); return }   // ← 이것도 이른 반환입니다
+ *
  * else 가 붙어 있으면 흐름이 갈라지는 것이지 "여기서 끝" 이 아니므로 세지 않습니다.
  */
 function isEarlyReturnGuard(stmt) {
   if (!stmt || stmt.type !== 'IfStatement' || stmt.alternate) return false
-  const c = stmt.consequent
-  if (!c) return false
-  if (c.type === 'ReturnStatement' || c.type === 'ThrowStatement') return true
-  if (c.type === 'BlockStatement' && c.body.length === 1) {
-    const only = c.body[0]
-    return only.type === 'ReturnStatement' || only.type === 'ThrowStatement'
-  }
-  return false
+  return isStop(lastStatement(stmt.consequent))
+}
+
+/** if 의 consequent 에서 실제로 흐름을 끝내는 마지막 문장 */
+function lastStatement(c) {
+  if (!c) return null
+  if (c.type !== 'BlockStatement') return c
+  return c.body.length ? c.body[c.body.length - 1] : null
+}
+
+function isStop(stmt) {
+  return !!stmt && (stmt.type === 'ReturnStatement' || stmt.type === 'ThrowStatement')
 }
 
 /* ── 조건부 실행: 여기서 멈출 수 있는 지점 ────────────────────────────────────
@@ -357,11 +366,14 @@ export function describeGate(g) {
   }
 }
 
-/** `if (…) return` 인가 `if (…) throw` 인가 */
+/**
+ * `if (…) return` 인가 `if (…) throw` 인가.
+ * 흐름을 끝내는 건 블록의 **마지막** 문장이라, 첫 문장을 보면
+ * `if (x) { log(); throw e }` 를 "중단" 으로 잘못 적습니다.
+ */
 function stopKind(stmt) {
-  const c = stmt.consequent
-  const only = c.type === 'BlockStatement' ? c.body[0] : c
-  return only && only.type === 'ThrowStatement' ? 'throw' : 'return'
+  const last = lastStatement(stmt.consequent)
+  return last && last.type === 'ThrowStatement' ? 'throw' : 'return'
 }
 
 /** 이 블록 최상위에 선언된 함수들 — 이름 → 함수 노드 */
