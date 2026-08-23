@@ -7,8 +7,8 @@
 
 ## 0. 새 세션이면 여기부터 (3분)
 
-1. `git log --oneline -5` — 마지막 커밋이 `e0a3521` 인지 확인.
-2. `npm test` — **57 pass / 0 fail** 이면 출발점이 맞음.
+1. `git log --oneline -5` — 마지막 커밋이 `25c8249` 인지 확인.
+2. `npm test` — **63 pass / 0 fail** 이면 출발점이 맞음.
 3. 이 문서 **3장(현재 상태)** 과 **6장(다음 할 일)** 만 보면 바로 이어서 작업 가능.
 4. 코드를 만지기 전, 손댈 파일이 4장 "계약" 3개 중 어디에 걸리는지 확인.
 
@@ -89,17 +89,34 @@
   연쇄·루프는 `→`, 경합은 순서가 정해져 있지 않다는 뜻으로 `⇄` 로 잇습니다.
   setter 알약 꼬리표는 `응답 뒤`(비동기) / `조건부`(if 안).
 
+### (6) A 트랙 4단계 — 상대 시간감 — 커밋 `25c8249`
+- 타임라인의 모든 스텝이 같은 크기의 알약이라 `setLoading(true)` 와 "응답 대기" 가
+  똑같은 무게로 보였음. **기다리는 구간만 폭을 키워** "여기서 시간이 흐른다" 를 눈에 보이게 함.
+- `timing.js`: `kind:'async-wait'` 스텝에 세 필드 추가 —
+  `weight`(즉시 스텝을 1 로 본 상대 눈금, **2~12**) · `waitMs`(리터럴로 확인된 ms, 모르면 `null`) ·
+  `detail`(`≈3초` / `시간 미상`).
+  - **`await` 하는 식 안에서만** 지연 리터럴을 찾음: `await sleep(2000)` ·
+    `await new Promise(r => setTimeout(r, 300))`. `setTimeout/setInterval` 의 2번째 인자,
+    `sleep|delay|wait|pause` 의 1번째 인자가 `NumericLiteral` 일 때만.
+  - effect 어딘가의 `setInterval(…, 1000)` 을 **응답 대기 시간으로 오해하지 않으려고**
+    await 바깥의 타이머는 세지 않음. 못 찾으면 `WAIT_WEIGHT_UNKNOWN = 6`.
+  - ms→무게는 계단식(`weightForMs`): <100→2 · <500→4 · <1000→5 · <3000→8 · <10000→10 · 그 이상→12.
+- UI: `renderTimingPill()` 이 `step.weight > 1` 이면 `minWidth = weight × 22px`(상한 12) +
+  `.timing-pill--wide` 클래스 + 툴팁. CSS 는 대기 알약에 **줄무늬 결**(지나가는 시간처럼).
+- **`isAsync`/`risk` 판정은 건드리지 않음** — 순수하게 보여주기만 추가.
+
 ---
 
 ## 3. 현재 상태 (스냅샷)
 
-- ✅ **작업트리 깨끗. 미커밋 없음.** `main` 최신 = `e0a3521` (A 트랙 3단계 완료).
-- ✅ `npm test` → **57 pass / 0 fail**
-  (parser 10 · behavior 5 · examples 3 · timing 9 · stale-deps 11 · interplay 19)
+- ✅ **작업트리 깨끗. 미커밋 없음.** `main` 최신 = `25c8249` (A 트랙 4단계 완료).
+- ✅ `npm test` → **63 pass / 0 fail**
+  (parser 10 · behavior 5 · examples 3 · timing 15 · stale-deps 11 · interplay 19)
 - ✅ `npx vite build` 정상. 초기 번들 59KB, `@babel/parser` 는 `lib` 청크(≈300KB)로 **지연 로드**.
 - ✅ 브라우저 실제 렌더 확인(headless Chrome + `test/browser-verify.html`):
   `⏱ 타이밍 · deps 점검 / 위험 1 / deps 빠짐 2`, `⚠ [userId] 빠짐?` 칩,
   `🔗 Effect 사이 관계 / 무한 루프 3 / 경합 2` 카드 7장까지 그려짐.
+  대기 알약도 실제 폭으로: `Promise 대기 · 시간 미상 [132px]`, `await 대기 · ≈3초 [220px]`.
 - ✅ 노이즈 점검: useMemo/useCallback/AbortController/ref 가 섞인 대시보드 컴포넌트에서
   **오탐 0**(deps·interplay 모두), ESLint `exhaustive-deps` 와 같은 지점만 지적.
 
@@ -120,7 +137,7 @@ src/
 │       ├── collect.js          # 상태/effect/핸들러/컴포넌트 수집 (walk 등 공용 헬퍼)
 │       ├── chain.js            # 이벤트→setter→상태→Effect 연쇄(Step 배열)
 │       ├── hooks.js            # 같은 파일 커스텀 훅 추적 + 스코프 경계
-│       ├── timing.js           # ⏱ 비동기 타이밍 + 언마운트 위험 + 참조 수집
+│       ├── timing.js           # ⏱ 비동기 타이밍 + 언마운트 위험 + 참조 수집 + 대기 무게
 │       ├── deps.js             # ⚠ deps 에서 빠진 값 = stale closure
 │       └── interplay.js        # 🔗 Effect 사이 관계 = 루프/경합/연쇄
 ├── ui/
@@ -140,6 +157,11 @@ test/                           # node --test. *.test.mjs + browser-verify.html
 `{ line, hook, trigger, deps, viaHook, isAsync, asyncKind,
 hasCleanup, hasGuard, risk, staleDeps, setters[], timeline[] }` 로 바꿔 UI 에 넘김.
 **`owner`(AST 노드)는 UI 로 새어 나가지 않음** — timing 결과에는 담기지 않는다.
+
+### ⏱ 타임라인 스텝 (UI 계약)
+`kind: 'trigger'|'effect'|'setter'|'async-wait'|'resolve'|'rerender'|'cleanup'|'risk'|'stale'`
+UI 는 `trigger·risk·stale` 을 뺀 나머지를 순서대로 알약으로 그린다.
+`async-wait` 만 `weight`(2~12) 를 갖고, UI 가 그 값으로 **폭**을 정한다 — 실제 ms 가 아니라 눈금.
 
 ### 🔗 interplay 항목 (UI 계약)
 `{ kind:'loop'|'contention'|'cascade', severity:'risk'|'warn'|'info', label, note,
@@ -163,19 +185,17 @@ npx vite --port 5199 &
 
 ---
 
-## 6. 다음 할 일 (A 트랙 이어가기)
+## 6. 다음 할 일
 
-사용자가 승인한 순서. **1·2·3단계는 완료·커밋됨.**
+사용자가 승인한 **A 트랙 4단계는 여기서 전부 완료**됐습니다 (1·2·3·4 커밋됨).
+다음 방향은 아직 정해지지 않았으니 **사용자와 먼저 합의할 것.** 후보:
 
-- **4단계 — 상대 시간감** ← **여기부터**
-  지금 ⏱ 타임라인은 모든 스텝이 같은 크기의 알약이라, `setLoading(true)` 와
-  "응답 대기" 가 똑같은 무게로 보입니다. **기다리는 구간을 실제 폭으로** 그려
-  "여기서 시간이 흐른다" 를 눈으로 알게 하는 것이 목표.
-  - 재료: `timing.js` 의 `buildTimeline()` 이 만드는 `kind:'async-wait'` 스텝.
-    폭 힌트(예: `weight`)를 이 스텝에 얹고, UI `renderTimingTrack()` 의
-    `.timing-flow` 에서 그 값으로 늘리면 됨. 스텝 배열 계약은 유지할 것.
-  - 실제 ms 는 알 수 없으니 **상대적 무게**만 (즉시 = 1, 네트워크 대기 = 크게,
-    `setTimeout(…, 3000)` 처럼 리터럴이 보이면 그 값을 참고하는 정도).
+- **B) 대기 구간을 이벤트 연쇄에도** — 지금 상대 시간감은 ⏱ 타임라인에만 있습니다.
+  위쪽 이벤트 연쇄(`chain.js`)의 비동기 스텝에도 같은 눈금을 주면 세 섹션의 시간 표현이 맞습니다.
+- **C) 조건부 실행 표시** — `if (tab !== 'posts') return` 같은 이른 반환·조건 가드를
+  타임라인에 "여기서 멈출 수 있음" 으로 그리기.
+- **D) 커스텀 훅 경계 시각화** — `viaHook` 배지는 있지만, 훅 안팎의 상태 흐름이 한눈에 안 보임.
+- **E) 다지기** — 큰 실제 파일로 오탐 점검, 성능(수백 줄 컴포넌트), 접근성/모바일 폭.
 
 작업 방식(확립됨): **작게 구현 → 테스트 추가 → `npm test` → 브라우저 실제 렌더 확인 → 커밋.**
 그리고 마지막에 **이 문서를 갱신**하고 커밋.
@@ -198,5 +218,6 @@ npx vite --port 5199 &
   **놓치는 쪽(false negative)이 헛경보보다 낫다**는 기준.
   규칙을 넓힐 땐 `test/stale-deps.test.mjs` 의 "잡으면 안 되는 것" 6개와
   `test/interplay.test.mjs` 의 "잡으면 안 되는 것" 3개 +
+  `test/timing.test.mjs` 의 "await 밖의 타이머는 대기 시간으로 세지 않는다" +
   "deps 배열이 없는 Effect" 절의 안 잡는 케이스 4개를 먼저 확인.
 - 임시 검증 파일은 repo 밖(세션 scratchpad)에 만들 것. 작업트리는 깨끗하게 유지.
