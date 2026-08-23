@@ -1382,6 +1382,178 @@ body {
   color: var(--text-tertiary);
 }
 
+/* --- ⏱ 비동기 타이밍 --- */
+.behavior-timing {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.behavior-timing__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+.behavior-timing__riskcount {
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 10px;
+  color: hsl(0, 80%, 66%);
+  background: hsla(0, 80%, 55%, 0.14);
+}
+
+.timing-track {
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid hsl(45, 85%, 55%);
+  border-radius: var(--radius-sm);
+}
+
+.timing-track--risk {
+  border-left-color: hsl(0, 80%, 58%);
+  background: hsla(0, 80%, 55%, 0.04);
+}
+
+.timing-track__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+
+.timing-track__head.is-clickable {
+  cursor: pointer;
+}
+
+.timing-track__when {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.timing-track__flag {
+  font-size: 0.6rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: hsl(160, 60%, 55%);
+  background: hsla(160, 60%, 45%, 0.14);
+}
+
+.timing-track__flag--off {
+  color: var(--text-tertiary);
+  background: var(--bg-base, transparent);
+  border: 1px solid var(--border-subtle);
+}
+
+.timing-track__line {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--text-tertiary);
+}
+
+.timing-flow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.timing-arrow {
+  color: var(--text-tertiary);
+  font-size: 0.8rem;
+}
+
+.timing-pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 9px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-primary);
+  background: var(--bg-base, transparent);
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+}
+
+.timing-pill.is-clickable {
+  cursor: pointer;
+}
+
+.timing-pill.is-clickable:hover {
+  border-color: hsl(280, 50%, 50%);
+}
+
+.timing-pill--async-wait {
+  color: hsl(200, 80%, 65%);
+  border-color: hsla(200, 80%, 55%, 0.4);
+  border-style: dashed;
+}
+
+.timing-pill--resolve {
+  color: hsl(160, 60%, 60%);
+  border-color: hsla(160, 60%, 45%, 0.4);
+}
+
+.timing-pill--async {
+  border-color: hsla(0, 80%, 55%, 0.35);
+}
+
+.timing-pill--sync .timing-pill__label {
+  color: hsl(280, 60%, 68%);
+}
+
+.timing-pill--cleanup {
+  color: var(--text-tertiary);
+  border-style: dashed;
+}
+
+.timing-pill--rerender {
+  color: var(--text-secondary);
+}
+
+.timing-pill__detail {
+  color: hsl(280, 60%, 68%);
+  font-size: 0.68rem;
+}
+
+.timing-pill__guard {
+  font-size: 0.58rem;
+  opacity: 0.85;
+}
+
+.timing-warn {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 9px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: hsla(0, 80%, 55%, 0.08);
+  border: 1px solid hsla(0, 80%, 55%, 0.2);
+}
+
+.timing-warn__label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: hsl(0, 80%, 68%);
+}
+
+.timing-warn__note {
+  font-size: 0.68rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
 /* --- 오류 --- */
 .behavior-error {
   padding: 18px;

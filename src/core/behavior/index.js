@@ -12,6 +12,7 @@ import { parse } from '@babel/parser'
 import { findComponents, collectComponent } from './collect.js'
 import { findCustomHooks, analyzeHook, resolveHookCalls, getPropNames } from './hooks.js'
 import { buildEvents, describeEffects } from './chain.js'
+import { analyzeEffectsTiming } from './timing.js'
 
 /**
  * @typedef {Object} Step
@@ -88,6 +89,7 @@ export function parseBehavior(code) {
       parent: comp.parent,
       states: merged.states,
       effects: describeEffects(merged.effects),
+      timing: analyzeEffectsTiming(merged.effects, merged.states),
       events: buildEvents(comp.name, merged, scope),
     }
   })

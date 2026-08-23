@@ -46,6 +46,8 @@ export function renderBehaviorView(result, onNavigate) {
       )
     )
     container.appendChild(renderStateSummary(result.components, onNavigate))
+    const timing = renderTimingSection(result.components, onNavigate)
+    if (timing) container.appendChild(timing)
     return container
   }
 
@@ -109,7 +111,106 @@ export function renderBehaviorView(result, onNavigate) {
   // 첫 이벤트를 기본 선택
   allChips[0].click()
 
+  const timing = renderTimingSection(result.components, onNavigate)
+  if (timing) container.appendChild(timing)
+
   return container
+}
+
+/**
+ * ⏱ 비동기 타이밍 — effect 가 언제 무엇을 하는지 가로 타임라인으로 보여주고,
+ * 응답 전 언마운트되면 없는 컴포넌트에 setState 하는 위험을 경고합니다.
+ * (동기/비동기 아닌 effect 는 흐름이 단순하므로 여기서는 생략합니다.)
+ */
+function renderTimingSection(components, onNavigate) {
+  const withAsync = components
+    .map(c => ({ name: c.name, effects: (c.timing || []).filter(e => e.isAsync) }))
+    .filter(c => c.effects.length > 0)
+
+  if (withAsync.length === 0) return null
+
+  const section = document.createElement('div')
+  section.className = 'behavior-timing'
+
+  const title = document.createElement('div')
+  title.className = 'behavior-timing__title'
+  const riskCount = withAsync.reduce((n, c) => n + c.effects.filter(e => e.risk).length, 0)
+  title.innerHTML = `⏱ 비동기 타이밍${riskCount ? ` <span class="behavior-timing__riskcount">위험 ${riskCount}</span>` : ''}`
+  section.appendChild(title)
+
+  withAsync.forEach(comp => {
+    const name = document.createElement('div')
+    name.className = 'behavior-comp__name'
+    name.textContent = comp.name
+    section.appendChild(name)
+
+    comp.effects.forEach(effect => {
+      section.appendChild(renderTimingTrack(effect, onNavigate))
+    })
+  })
+
+  return section
+}
+
+function renderTimingTrack(effect, onNavigate) {
+  const track = document.createElement('div')
+  track.className = 'timing-track' + (effect.risk ? ' timing-track--risk' : '')
+
+  const head = document.createElement('div')
+  head.className = 'timing-track__head'
+  const triggerStep = effect.timeline.find(s => s.kind === 'trigger')
+  head.innerHTML = `
+    <span class="timing-track__when">${triggerStep ? triggerStep.label : effect.hook}</span>
+    ${effect.viaHook ? `<span class="hl-badge">${effect.viaHook}</span>` : ''}
+    ${effect.hasCleanup ? '<span class="timing-track__flag">정리 있음</span>' : '<span class="timing-track__flag timing-track__flag--off">정리 없음</span>'}
+    ${effect.line ? `<span class="timing-track__line">L${effect.line}</span>` : ''}
+  `
+  if (effect.line && onNavigate) {
+    head.classList.add('is-clickable')
+    head.addEventListener('click', () => onNavigate(effect.line))
+  }
+  track.appendChild(head)
+
+  const flow = document.createElement('div')
+  flow.className = 'timing-flow'
+  const visualSteps = effect.timeline.filter(s => s.kind !== 'trigger' && s.kind !== 'risk')
+  visualSteps.forEach((step, i) => {
+    if (i > 0) {
+      const arrow = document.createElement('span')
+      arrow.className = 'timing-arrow'
+      arrow.textContent = '→'
+      flow.appendChild(arrow)
+    }
+    flow.appendChild(renderTimingPill(step, onNavigate))
+  })
+  track.appendChild(flow)
+
+  const risk = effect.timeline.find(s => s.kind === 'risk')
+  if (risk) {
+    const warn = document.createElement('div')
+    warn.className = 'timing-warn'
+    warn.innerHTML = `<span class="timing-warn__label">⚠ ${risk.label}</span><span class="timing-warn__note">${risk.note}</span>`
+    track.appendChild(warn)
+  }
+
+  return track
+}
+
+function renderTimingPill(step, onNavigate) {
+  const pill = document.createElement('span')
+  pill.className = `timing-pill timing-pill--${step.kind}` + (step.phase ? ` timing-pill--${step.phase}` : '')
+
+  const detail = step.detail ? `<span class="timing-pill__detail">${step.detail}</span>` : ''
+  const guard = step.kind === 'setter' && step.phase === 'async'
+    ? `<span class="timing-pill__guard">${step.guarded ? '🛡 가드됨' : '가드 없음'}</span>`
+    : ''
+  pill.innerHTML = `<span class="timing-pill__label">${step.label}${detail}</span>${guard}`
+
+  if (step.line && onNavigate) {
+    pill.classList.add('is-clickable')
+    pill.addEventListener('click', () => onNavigate(step.line))
+  }
+  return pill
 }
 
 /** 선택된 이벤트의 연쇄 */
