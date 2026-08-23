@@ -164,6 +164,45 @@ export default function Slow({ id }) {
     })
     log(`  wait track ${i + 1}: ` + pills.join('  ·  '))
   })
+  // ⏱ 조건부 실행 — 관문(gate) 알약이 흐름 안 제자리에 그려지는지 봅니다
+  const gateCode = `import { useState, useEffect } from 'react'
+
+export default function Panel({ tab, id }) {
+  const [posts, setPosts] = useState([])
+  const [loading, setLoading] = useState(false)
+  useEffect(() => {
+    setLoading(true)
+    if (tab !== 'posts') return
+    fetchPosts(id).then(setPosts)
+  }, [tab, id])
+  useEffect(() => {
+    let alive = true
+    async function load() {
+      if (!id) return
+      const p = await fetchPosts(id)
+      if (!alive) return
+      setPosts(p)
+    }
+    load()
+    return () => { alive = false }
+  }, [id])
+  return <div onClick={() => setLoading(false)}>{posts.length}</div>
+}
+`
+  const be5 = renderBehaviorView(parseBehavior(gateCode), () => {})
+  document.body.appendChild(be5)
+  const gateTracks = [...be5.querySelectorAll('.timing-track')]
+  log('gate tracks: ' + gateTracks.length)
+  gateTracks.forEach((t, i) => {
+    const pills = [...t.querySelectorAll('.timing-pill')].map(p =>
+      (p.classList.contains('timing-pill--gate') ? '⟨관문⟩ ' : '') +
+      p.textContent.replace(/\s+/g, ' ').trim())
+    log(`  gate track ${i + 1}: ` + pills.join('  ·  '))
+  })
+  const gatePills = [...be5.querySelectorAll('.timing-pill--gate')]
+  log('관문 알약: ' + gatePills.length + '개 / 설명 붙은 것 ' +
+    gatePills.filter(p => p.getAttribute('aria-label')).length + '개')
+
   // 붙여넣은 코드가 HTML 로 해석되지 않는지 — `<button onClick>` 라벨이 진짜
   // 엘리먼트로 렌더되면 스텝이 깨집니다. 라벨 안에는 span 말고 아무것도 없어야 합니다.
   const labels = [...document.querySelectorAll('.behavior-step__label')]

@@ -1556,6 +1556,19 @@ body {
   color: hsl(200, 75%, 72%);
 }
 
+/* 관문 — 조건이 참이면 여기서 되돌아 나갑니다.
+   흐름이 끊길 수 있는 자리라 테두리를 끊어 그립니다(위험이 아니므로 빨강은 아닙니다). */
+.timing-pill--gate {
+  color: hsl(45, 80%, 68%);
+  border-color: hsla(45, 80%, 55%, 0.42);
+  border-style: dashed;
+}
+
+.timing-pill--gate .timing-pill__label::before {
+  content: '↩ ';
+  opacity: 0.7;
+}
+
 .timing-pill--resolve {
   color: hsl(160, 60%, 60%);
   border-color: hsla(160, 60%, 45%, 0.4);

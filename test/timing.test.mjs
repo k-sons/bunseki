@@ -246,3 +246,150 @@ test('else 가 붙으면 이른 반환이 아니라 갈림길이다', () => {
   assert.equal(late.guarded, false, 'else 가 있으면 뒤 문장을 지키지 못한다')
   assert.equal(e.risk, 'unmount-setstate')
 })
+
+
+/* ── 조건부 실행: 관문(gate) ─────────────────────────────────────────────────
+ * 타임라인이 알약을 죽 늘어놓기만 하면 "언제나 끝까지 간다" 처럼 보입니다.
+ * 첫 줄에서 되돌아 나가는 effect 를 "여기서 멈출 수 있음" 으로 그리기 위한 재료.
+ */
+
+const gatesOf = (code) => firstAsync(timingOf(code)).gates
+const gateSteps = (e) => e.timeline.filter(s => s.kind === 'gate')
+
+test('이른 반환 조건을 관문으로 잡고, 조건식을 원본 그대로 보여준다', () => {
+  const t = timingOf(`  useEffect(() => {
+    if (!id) return
+    fetchUser(id).then(setUser)
+  }, [id])`)
+  const e = firstAsync(t)
+  assert.equal(e.gates.length, 1)
+  assert.equal(e.gates[0].cond, '!id')
+  assert.equal(e.gates[0].stop, 'return')
+  assert.equal(gateSteps(e)[0].label, '!id 면 중단')
+})
+
+test('비교식도 그대로 — if (tab !== \'posts\') return', () => {
+  const g = gatesOf(`  useEffect(() => {
+    if (tab !== 'posts') return
+    fetchUser(id).then(setUser)
+  }, [id])`)
+  assert.equal(g.length, 1)
+  assert.equal(g[0].cond, "tab !== 'posts'")
+})
+
+test('throw 로 끝나는 관문은 중단이 아니라 오류로 적는다', () => {
+  const t = timingOf(`  useEffect(() => {
+    if (!id) throw new Error('id required')
+    fetchUser(id).then(setUser)
+  }, [id])`)
+  const e = firstAsync(t)
+  assert.equal(e.gates[0].stop, 'throw')
+  assert.equal(gateSteps(e)[0].label, '!id 면 오류')
+})
+
+test('곧바로 부르는 로컬 함수 안의 이른 반환도 관문이다', () => {
+  const g = gatesOf(`  useEffect(() => {
+    async function load() {
+      if (!id) return
+      const u = await fetchUser(id)
+      setUser(u)
+    }
+    load()
+  }, [id])`)
+  assert.equal(g.length, 1)
+  assert.equal(g[0].cond, '!id')
+})
+
+test('IIFE 안의 이른 반환도 관문이다', () => {
+  const g = gatesOf(`  useEffect(() => {
+    ;(async () => {
+      if (!id) return
+      const u = await fetchUser(id)
+      setUser(u)
+    })()
+  }, [id])`)
+  assert.equal(g.length, 1)
+})
+
+test('관문은 코드에 적힌 차례대로, 즉시 setter 와 섞여 놓인다', () => {
+  const t = timingOf(`  useEffect(() => {
+    setLoading(true)
+    if (!id) return
+    fetchUser(id).then(setUser)
+  }, [id])`)
+  const e = firstAsync(t)
+  const kinds = e.timeline
+    .filter(s => s.kind === 'setter' || s.kind === 'gate')
+    .map(s => s.kind)
+  assert.deepEqual(kinds, ['setter', 'gate', 'setter'], 'setLoading → 관문 → setUser')
+})
+
+/* ── 관문으로 잡으면 안 되는 것 (헛경보 방지) ─────────────────────────────── */
+
+test('await 뒤의 if (!alive) return 은 관문이 아니라 언마운트 가드다', () => {
+  const t = timingOf(`  useEffect(() => {
+    let alive = true
+    async function load() {
+      const u = await fetchUser(id)
+      if (!alive) return
+      setUser(u)
+    }
+    load()
+    return () => { alive = false }
+  }, [id])`)
+  const e = firstAsync(t)
+  assert.equal(e.gates.length, 0, '응답을 기다린 뒤의 조건은 실행을 막는 관문이 아니다')
+  assert.equal(e.hasGuard, true, '가드로는 이미 세고 있다')
+})
+
+test('나중에 불릴 콜백 안의 이른 반환은 관문이 아니다', () => {
+  const g = gatesOf(`  useEffect(() => {
+    const t = setInterval(() => {
+      if (!enabled) return
+      setLoading(true)
+    }, 1000)
+    fetchUser(id).then(setUser)
+    return () => clearInterval(t)
+  }, [id])`)
+  assert.equal(g.length, 0, 'effect 가 도는 그 순간의 관문이 아니다')
+})
+
+test('else 가 붙은 if 는 관문이 아니다', () => {
+  const g = gatesOf(`  useEffect(() => {
+    if (!id) { return } else { log(id) }
+    fetchUser(id).then(setUser)
+  }, [id])`)
+  assert.equal(g.length, 0)
+})
+
+test('조건이 없는 effect 에는 관문 스텝이 없다', () => {
+  const e = firstAsync(timingOf(`  useEffect(() => {
+    fetchUser(id).then(setUser)
+  }, [id])`))
+  assert.equal(e.gates.length, 0)
+  assert.equal(gateSteps(e).length, 0)
+})
+
+/* ── 조건문 안의 setter 는 "조건부" 로 표시 ───────────────────────────────── */
+
+test('if 안에서 부르는 즉시 setter 는 조건부로 표시된다', () => {
+  const t = timingOf(`  useEffect(() => {
+    if (id) setLoading(true)
+    fetchUser(id).then(setUser)
+  }, [id])`)
+  const e = firstAsync(t)
+  const step = e.timeline.find(s => s.kind === 'setter' && s.label === 'setLoading()')
+  assert.equal(step.conditional, true)
+})
+
+test('관문 뒤에 온 setter 는 조건부로 또 표시하지 않는다', () => {
+  // 멈출 수 있다는 것은 관문 알약이 이미 말합니다 — setter 마다 또 붙이면 시끄럽습니다.
+  const t = timingOf(`  useEffect(() => {
+    if (!id) return
+    setLoading(true)
+    fetchUser(id).then(setUser)
+  }, [id])`)
+  const e = firstAsync(t)
+  const step = e.timeline.find(s => s.kind === 'setter' && s.label === 'setLoading()')
+  assert.equal(step.conditional, false)
+})

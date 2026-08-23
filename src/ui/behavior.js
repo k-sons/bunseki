@@ -137,6 +137,8 @@ function appendAnalysisSections(container, components, onNavigate) {
  * 두 가지 함정을 경고합니다.
  *   - 응답 전 언마운트되면 없는 컴포넌트에 setState 하는 위험
  *   - deps 에서 빠진 값 — effect 가 옛 값을 붙잡고 있음 (stale closure)
+ * 흐름 안에는 관문(gate)도 함께 그립니다 — 조건이 참이면 되돌아 나가는 자리라
+ * 타임라인이 "언제나 끝까지 간다" 처럼 보이지 않게 합니다.
  * 짚을 것이 없는 동기 effect 는 흐름이 단순하므로 여기서는 생략합니다.
  */
 function renderTimingSection(components, onNavigate) {
@@ -259,11 +261,23 @@ function renderTimingPill(step, onNavigate) {
   }
 
   const detail = step.detail ? `<span class="timing-pill__detail">${esc(step.detail)}</span>` : ''
-  const guard = step.kind === 'setter' && step.phase === 'async'
-    ? `<span class="timing-pill__guard">${step.guarded ? '🛡 가드됨' : '가드 없음'}</span>`
-    : ''
+  // setter 꼬리표는 단계마다 궁금한 것이 다릅니다 —
+  // 응답 뒤에는 "언마운트 가드가 있나", 곧바로 부르는 자리에서는 "늘 실행되나".
+  const guard = step.kind !== 'setter' ? ''
+    : step.phase === 'async'
+      ? `<span class="timing-pill__guard">${step.guarded ? '🛡 가드됨' : '가드 없음'}</span>`
+      : step.conditional
+        ? '<span class="timing-pill__guard">조건부</span>'
+        : ''
   pill.innerHTML = `<span class="timing-pill__label">${esc(step.label)}${detail}</span>${guard}`
   if (step.kind === 'async-wait') pill.setAttribute('aria-label', `${step.label} — ${step.detail}`)
+
+  // 관문 — 조건이 참이면 아래 단계로 가지 않는다는 뜻입니다.
+  // 끊긴 테두리만으로는 전해지지 않으므로 설명을 함께 답니다.
+  if (step.kind === 'gate' && step.note) {
+    pill.title = step.note
+    pill.setAttribute('aria-label', `${step.label} — ${step.note}`)
+  }
 
   if (step.line && onNavigate) {
     pill.classList.add('is-clickable')

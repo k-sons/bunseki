@@ -18,6 +18,8 @@
  *   - staleDeps     : effect 가 읽는데 deps 에는 없는 값 (deps.js) → 옛 값을 붙잡고 있음
  *   - wait weight   : 기다리는 구간의 상대적 무게 — 타임라인에서 폭으로 그려
  *                     "여기서 시간이 흐른다" 를 눈에 보이게 합니다 (실제 ms 아님)
+ *   - gates         : `if (tab !== 'posts') return` 처럼 **여기서 멈출 수 있는** 지점.
+ *                     타임라인이 "항상 끝까지 간다" 처럼 보이지 않게 합니다.
  */
 
 import { walk, calleeName, isFunctionNode, lineOf } from './collect.js'
@@ -27,19 +29,20 @@ import { findStaleDeps } from './deps.js'
  * 컴포넌트의 effect 목록(본문 AST 포함)과 상태 목록으로 타이밍을 분석합니다.
  * @param {Array} effects - collect.js 가 모은 raw effect (body 포함)
  * @param {Array} states  - { state, setter, ... }
+ * @param {string} [code] - 원본 소스. 조건식을 그대로 보여주려고 잘라 씁니다.
  * @returns {Array} 각 effect 의 타이밍 정보
  */
-export function analyzeEffectsTiming(effects, states) {
+export function analyzeEffectsTiming(effects, states, code) {
   const setterNames = states.map(s => s.setter).filter(Boolean)
   const setterToState = {}
   for (const s of states) if (s.setter) setterToState[s.setter] = s.state || null
 
   return effects
     .filter(e => e && e.body)
-    .map(e => analyzeOne(e, setterNames, setterToState))
+    .map(e => analyzeOne(e, setterNames, setterToState, code))
 }
 
-function analyzeOne(effect, setterNames, setterToState) {
+function analyzeOne(effect, setterNames, setterToState, code) {
   const body = effect.body
 
   // ── 비동기 여부 ──
@@ -61,6 +64,9 @@ function analyzeOne(effect, setterNames, setterToState) {
   const immediate = setters.filter(s => !s.deferred)
   const deferred = setters.filter(s => s.deferred)
   const unguardedDeferred = deferred.filter(s => !s.guarded)
+
+  // ── 여기서 멈출 수 있는 지점 (이른 반환 조건) ──
+  const gates = findGates(body, code)
 
   // ── 정리 함수 / 취소 수단 ──
   const hasCleanup = returnsFunction(body)
@@ -94,9 +100,10 @@ function analyzeOne(effect, setterNames, setterToState) {
     hasGuard,
     risk,
     staleDeps,
+    gates,
     setters: setters.map(s => ({ ...s, state: setterToState[s.name] || null })),
     timeline: buildTimeline({
-      effect, isAsync, asyncKind, immediate, deferred, hasCleanup, risk, staleDeps, setterToState,
+      effect, isAsync, asyncKind, immediate, deferred, hasCleanup, risk, staleDeps, gates, setterToState,
     }),
   }
 }
@@ -115,6 +122,9 @@ const SKIP_KEYS = new Set([
  *             - guarded : if 문 안에 감싸여 있는가 (`if (alive) setX()` 류)
  *             - nested  : 중첩 함수 안에서 불리는가 (`setInterval(() => setX())` 류).
  *                         effect 가 도는 그 순간에 실행되는 것이 아니라 나중에 불립니다.
+ *             - inIf    : **조건문 가지 안**에 있는가. `guarded` 와 달리 이른 반환
+ *                         뒤에 온 것은 세지 않습니다 — 그건 관문(gate)으로 따로 보여
+ *                         주므로, 뒤따르는 setter 마다 "조건부" 를 또 붙이면 시끄럽습니다.
  *   refs    — effect 가 **읽는** 이름들. deps 와 대조해 빠진 값을 찾는 데 씁니다.
  *             `user.id` 의 id, `{ id: 1 }` 의 키처럼 값을 읽는 자리가 아닌 이름과
  *             중첩 함수의 파라미터는 세지 않습니다.
@@ -126,10 +136,10 @@ function analyzeBody(effectBody, setterNames) {
   const found = []
   const refs = []
 
-  function visit(node, deferred, guarded, nested) {
+  function visit(node, deferred, guarded, nested, inIf) {
     if (!node || typeof node !== 'object') return
     if (Array.isArray(node)) {
-      for (const n of node) visit(n, deferred, guarded, nested)
+      for (const n of node) visit(n, deferred, guarded, nested, inIf)
       return
     }
     if (typeof node.type !== 'string') return
@@ -140,13 +150,13 @@ function analyzeBody(effectBody, setterNames) {
       case 'ArrowFunctionExpression':
         // 중첩 함수: 그 함수 본문을 순서대로 다시 훑습니다.
         //            여기서부터의 setter 는 effect 실행 중이 아니라 나중에 불릴 수 있습니다.
-        visitFunctionBody(node, deferred, guarded, true)
+        visitFunctionBody(node, deferred, guarded, true, inIf)
         return
 
       case 'IfStatement':
-        visit(node.test, deferred, guarded, nested)
-        visit(node.consequent, deferred, true, nested)
-        if (node.alternate) visit(node.alternate, deferred, true, nested)
+        visit(node.test, deferred, guarded, nested, inIf)
+        visit(node.consequent, deferred, true, nested, true)
+        if (node.alternate) visit(node.alternate, deferred, true, nested, true)
         return
 
       case 'Identifier':
@@ -157,42 +167,42 @@ function analyzeBody(effectBody, setterNames) {
       case 'MemberExpression':
       case 'OptionalMemberExpression':
         // user.id → 읽는 값은 user 뿐, id 는 속성 이름입니다.
-        visit(node.object, deferred, guarded, nested)
-        if (node.computed) visit(node.property, deferred, guarded, nested)
+        visit(node.object, deferred, guarded, nested, inIf)
+        if (node.computed) visit(node.property, deferred, guarded, nested, inIf)
         return
 
       case 'ObjectProperty':
       case 'Property':
-        if (node.computed) visit(node.key, deferred, guarded, nested)
-        visit(node.value, deferred, guarded, nested)
+        if (node.computed) visit(node.key, deferred, guarded, nested, inIf)
+        visit(node.value, deferred, guarded, nested, inIf)
         return
 
       case 'ObjectMethod':
-        if (node.computed) visit(node.key, deferred, guarded, nested)
-        visitFunctionBody(node, deferred, guarded, true)
+        if (node.computed) visit(node.key, deferred, guarded, nested, inIf)
+        visitFunctionBody(node, deferred, guarded, true, inIf)
         return
 
       case 'CallExpression':
       case 'OptionalCallExpression': {
         // .then(cb): 콜백은 응답 이후에 실행됩니다 → deferred
         if (calleeName(node) === 'then') {
-          visit(node.callee, deferred, guarded, nested)
+          visit(node.callee, deferred, guarded, nested, inIf)
           for (const arg of node.arguments) {
             if (isFunctionNode(arg)) {
-              visitFunctionBody(arg, true, guarded, true)
+              visitFunctionBody(arg, true, guarded, true, inIf)
             } else if (arg.type === 'Identifier' && setterNames.includes(arg.name)) {
               // .then(setUser) — 값을 읽는 자리가 아니라, 응답이 오면 그대로 불립니다.
               // 콜백으로 감싼 .then((u) => setUser(u)) 과 같은 뜻이므로 같게 셉니다.
-              found.push({ name: arg.name, line: lineOf(arg), deferred: true, guarded, nested: true })
+              found.push({ name: arg.name, line: lineOf(arg), deferred: true, guarded, nested: true, inIf })
             } else {
-              visit(arg, deferred, guarded, nested)
+              visit(arg, deferred, guarded, nested, inIf)
             }
           }
           return
         }
         // setter 직접 호출
         if (node.callee && node.callee.type === 'Identifier' && setterNames.includes(node.callee.name)) {
-          found.push({ name: node.callee.name, line: lineOf(node), deferred, guarded, nested })
+          found.push({ name: node.callee.name, line: lineOf(node), deferred, guarded, nested, inIf })
         }
         break
       }
@@ -200,11 +210,11 @@ function analyzeBody(effectBody, setterNames) {
 
     for (const key of Object.keys(node)) {
       if (SKIP_KEYS.has(key)) continue
-      visit(node[key], deferred, guarded, nested)
+      visit(node[key], deferred, guarded, nested, inIf)
     }
   }
 
-  function visitFunctionBody(fnNode, deferredEntry, guarded, nested) {
+  function visitFunctionBody(fnNode, deferredEntry, guarded, nested, inIf) {
     const body = fnNode.body
     if (!body) return
     if (body.type === 'BlockStatement') {
@@ -212,19 +222,20 @@ function analyzeBody(effectBody, setterNames) {
       let guardedHere = guarded
       for (const stmt of body.body) {
         const awaitHere = containsDirectAwait(stmt)
-        visit(stmt, deferred || awaitHere, guardedHere, nested)
+        visit(stmt, deferred || awaitHere, guardedHere, nested, inIf)
         if (awaitHere) deferred = true
         // if (!alive) return — 이 뒤의 문장은 조건이 참일 때만 실행됩니다.
         // if (alive) { … } 로 감싼 것과 같은 보호라 똑같이 가드로 봅니다.
+        // (inIf 는 올리지 않습니다 — 이 조건은 관문 스텝으로 따로 보여집니다)
         if (isEarlyReturnGuard(stmt)) guardedHere = true
       }
     } else {
       // 화살표 축약형 (본문이 식)
-      visit(body, deferredEntry || containsDirectAwait(body), guarded, nested)
+      visit(body, deferredEntry || containsDirectAwait(body), guarded, nested, inIf)
     }
   }
 
-  visitFunctionBody(effectBody, false, false, false)
+  visitFunctionBody(effectBody, false, false, false, false)
   return { setters: found, refs }
 }
 
@@ -243,6 +254,122 @@ function isEarlyReturnGuard(stmt) {
     return only.type === 'ReturnStatement' || only.type === 'ThrowStatement'
   }
   return false
+}
+
+/* ── 조건부 실행: 여기서 멈출 수 있는 지점 ────────────────────────────────────
+ *
+ * 타임라인이 알약을 죽 늘어놓기만 하면 "언제나 끝까지 간다" 처럼 보입니다.
+ * 실제로는 첫 줄에서 되돌아 나가는 effect 가 많습니다:
+ *
+ *   useEffect(() => {
+ *     if (tab !== 'posts') return   // ← 아래는 조건이 거짓일 때만 실행됩니다
+ *     fetchPosts().then(setPosts)
+ *   }, [tab])
+ *
+ * 관문으로 **세지 않는** 것 (헛경보를 안 내는 쪽으로):
+ *   - **await 뒤의 이른 반환** — `if (!alive) return` 은 실행을 막는 관문이 아니라
+ *     응답이 온 뒤의 언마운트 가드입니다. 이미 setter 의 `🛡 가드됨` 으로 보입니다.
+ *   - **나중에 불릴 콜백 안** — `setInterval(() => { if (!on) return … })` 은
+ *     effect 가 도는 그 순간의 관문이 아닙니다.
+ *   - **else 가 붙은 if** — 갈림길일 뿐 "여기서 끝" 이 아닙니다(isEarlyReturnGuard).
+ *
+ * 반대로 effect 가 돌자마자 실행되는 함수(IIFE · 바로 부르는 로컬 함수) 안의
+ * 이른 반환은 본문에 그대로 쓴 것과 같으므로 셉니다 — 비동기 effect 의 흔한 형태입니다.
+ */
+
+/** 로컬 함수를 따라 들어가는 깊이 — 곧바로 부르는 한 겹까지만 */
+const GATE_MAX_DEPTH = 1
+
+/**
+ * @returns {Array<{line:number|null, stop:'return'|'throw', cond:string}>}
+ */
+function findGates(effectBody, code) {
+  const gates = []
+  const seen = new Set()
+
+  function scan(fnNode, depth) {
+    if (!fnNode || seen.has(fnNode)) return
+    seen.add(fnNode)
+
+    const body = fnNode.body
+    if (!body || body.type !== 'BlockStatement') return
+
+    const locals = depth < GATE_MAX_DEPTH ? collectLocalFns(body) : null
+
+    for (const stmt of body.body) {
+      // await 를 만나면 그 뒤는 관문이 아니라 "응답 뒤" 입니다 — 여기서 멈춥니다.
+      if (containsDirectAwait(stmt)) break
+
+      if (isEarlyReturnGuard(stmt)) {
+        gates.push({
+          line: lineOf(stmt),
+          stop: stopKind(stmt),
+          cond: condText(stmt.test, code),
+        })
+        continue
+      }
+
+      if (locals) {
+        const called = immediatelyCalledFn(stmt, locals)
+        if (called) scan(called, depth + 1)
+      }
+    }
+  }
+
+  scan(effectBody, 0)
+  return gates
+}
+
+/** `if (…) return` 인가 `if (…) throw` 인가 */
+function stopKind(stmt) {
+  const c = stmt.consequent
+  const only = c.type === 'BlockStatement' ? c.body[0] : c
+  return only && only.type === 'ThrowStatement' ? 'throw' : 'return'
+}
+
+/** 이 블록 최상위에 선언된 함수들 — 이름 → 함수 노드 */
+function collectLocalFns(block) {
+  const map = new Map()
+  for (const stmt of block.body) {
+    if (stmt.type === 'FunctionDeclaration' && stmt.id) {
+      map.set(stmt.id.name, stmt)
+    } else if (stmt.type === 'VariableDeclaration') {
+      for (const d of stmt.declarations) {
+        if (d.id && d.id.type === 'Identifier' && isFunctionNode(d.init)) map.set(d.id.name, d.init)
+      }
+    }
+  }
+  return map
+}
+
+/**
+ * 이 문장이 "지금 바로 함수를 부르는" 문장이면 그 함수 노드를 돌려줍니다.
+ *   (async () => { … })()   — IIFE
+ *   load()                   — 바로 위에서 선언한 로컬 함수
+ * 조건문 안이나 콜백으로 넘긴 호출은 여기 오지 않습니다(최상위 문장만 봅니다).
+ */
+function immediatelyCalledFn(stmt, locals) {
+  if (stmt.type !== 'ExpressionStatement') return null
+  let expr = stmt.expression
+  if (expr && expr.type === 'AwaitExpression') expr = expr.argument
+  if (!expr || (expr.type !== 'CallExpression' && expr.type !== 'OptionalCallExpression')) return null
+
+  const callee = expr.callee
+  if (isFunctionNode(callee)) return callee
+  if (callee && callee.type === 'Identifier' && locals.has(callee.name)) return locals.get(callee.name)
+  return null
+}
+
+/** 조건식을 사람이 읽는 짧은 문자열로 — 원본을 그대로 잘라 씁니다 */
+const COND_MAX_LEN = 32
+
+function condText(node, code) {
+  if (!node) return '조건'
+  if (typeof code === 'string' && typeof node.start === 'number' && typeof node.end === 'number') {
+    const raw = code.slice(node.start, node.end).replace(/\s+/g, ' ').trim()
+    if (raw) return raw.length > COND_MAX_LEN ? `${raw.slice(0, COND_MAX_LEN - 1)}…` : raw
+  }
+  return '조건'
 }
 
 /** 중첩 함수를 건너뛰고, 이 함수 레벨에 await 가 직접 있는지 봅니다 */
@@ -287,7 +414,7 @@ function usesAbort(node) {
 /**
  * UI 가 순서대로 그리기만 하면 되도록 타임라인 스텝을 평탄화합니다.
  */
-function buildTimeline({ effect, isAsync, asyncKind, immediate, deferred, hasCleanup, risk, staleDeps, setterToState }) {
+function buildTimeline({ effect, isAsync, asyncKind, immediate, deferred, hasCleanup, risk, staleDeps, gates, setterToState }) {
   const steps = []
   const triggerLabel = effect.trigger === 'mount' ? '마운트 시 1회'
     : effect.trigger === 'every-render' ? '매 렌더마다'
@@ -296,14 +423,25 @@ function buildTimeline({ effect, isAsync, asyncKind, immediate, deferred, hasCle
   steps.push({ kind: 'trigger', label: triggerLabel })
   steps.push({ kind: 'effect', label: `${effect.hook} 실행`, line: effect.line })
 
-  for (const s of immediate) {
-    steps.push({
+  // 응답을 기다리기 전 구간 — 관문(gate)과 곧바로 부르는 setter 가 섞여 있습니다.
+  // 코드에 적힌 차례대로 보여야 "무엇 앞에서 멈추는지" 가 맞으므로 줄 번호로 세웁니다.
+  const before = [
+    ...gates.map(g => ({
+      kind: 'gate',
+      label: `${g.cond} 면 ${g.stop === 'throw' ? '오류' : '중단'}`,
+      note: '이 조건이 참이면 아래 단계는 실행되지 않습니다',
+      line: g.line,
+    })),
+    ...immediate.map(s => ({
       kind: 'setter', phase: 'sync',
       label: `${s.name}()`,
       detail: setterToState[s.name] ? `→ ${setterToState[s.name]}` : null,
+      conditional: !!s.inIf,
       line: s.line,
-    })
-  }
+    })),
+  ].sort((a, b) => (a.line == null ? Infinity : a.line) - (b.line == null ? Infinity : b.line))
+
+  for (const step of before) steps.push(step)
 
   if (isAsync) {
     const wait = describeWait(effect.body)

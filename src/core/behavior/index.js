@@ -84,7 +84,7 @@ export function parseBehavior(code) {
       outOfScope: hookUsage.outOfScope,
     }
 
-    const timing = analyzeEffectsTiming(merged.effects, merged.states)
+    const timing = analyzeEffectsTiming(merged.effects, merged.states, code)
 
     return {
       name: comp.name,
