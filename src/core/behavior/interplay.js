@@ -5,6 +5,7 @@
  *   useEffect(() => { … }, [user])             // B 가 이어서 돈다        → 연쇄
  *
  *   useEffect(() => { setCount(count + 1) }, [count])   // 스스로를 다시 부름 → 무한 루프
+ *   useEffect(() => { setCount(1) })                    // deps 가 없어 매 렌더 실행 → 무한 루프
  *
  *   useEffect(() => { setUser(a) }, [id])      // 둘 다 user 를 쓴다
  *   useEffect(() => { setUser(b) }, [q])       //   누가 마지막에 쓰나?    → 경합
@@ -14,6 +15,7 @@
  *   "읽는다" = deps 에 그 상태가 있다 (trigger === 'deps')
  * 를 간선으로 이어 그래프를 만들고 — 고리면 **무한 루프**, 아니면 **연쇄**,
  * 같은 상태에 쓰는 Effect 가 둘 이상이면 **경합** 입니다.
+ * deps 배열이 아예 없는 Effect 는 간선 없이도 혼자 고리를 이룹니다(매 렌더 재실행).
  *
  * 오탐 정책은 deps.js 와 같습니다: 확실한 것만 말합니다.
  * 여기서 쓰는 사실(어떤 setter 가 어떤 상태를 바꾸는가 · deps 에 무엇이 있는가)은
@@ -77,6 +79,7 @@ export function analyzeInterplay(timing) {
 
   const findings = [
     ...cycles.map(c => loopFinding(c, nodes)),
+    ...everyRenderFindings(nodes),
     ...contentionFindings(nodes),
     ...cascadeFindings(nodes, edges.filter(e => e.from !== e.to && !cycleEdges.has(edgeKey(e)))),
   ]
@@ -106,10 +109,12 @@ function mergeWrites(setters) {
         line: s.line,
         deferred: !!s.deferred,
         guarded: !!s.guarded,
+        nested: !!s.nested,
       })
     } else {
       prev.deferred = prev.deferred || !!s.deferred
       prev.guarded = prev.guarded && !!s.guarded
+      prev.nested = prev.nested && !!s.nested
     }
   }
   return [...byState.values()]
@@ -178,9 +183,7 @@ function loopFinding(cycle, nodes) {
   steps.push({ kind: 'loopback', label: `↺ 다시 L${first.line}`, line: first.line })
 
   const lines = [first.line, ...cycle.slice(0, -1).map(e => nodes[e.to].line)]
-  const guardNote = guarded
-    ? ' 조건문 안에서 바꾸므로 조건이 거짓이 되면 멈추지만, 조건이 어긋나면 끝없이 반복합니다.'
-    : ' 같은 값을 그대로 다시 쓰면 React 가 멈춰 주지만, 새 객체·배열을 만들어 넣으면 계속 돕니다.'
+  const guardNote = loopGuardNote(guarded)
 
   if (isSelf) {
     const state = cycle[0].state
@@ -206,6 +209,51 @@ function loopFinding(cycle, nodes) {
     lines,
     steps,
   }
+}
+
+/** 고리를 멈출 수 있는가 — 루프 설명 끝에 붙는 한 마디 */
+function loopGuardNote(guarded) {
+  return guarded
+    ? ' 조건문 안에서 바꾸므로 조건이 거짓이 되면 멈추지만, 조건이 어긋나면 끝없이 반복합니다.'
+    : ' 같은 값을 그대로 다시 쓰면 React 가 멈춰 주지만, 새 객체·배열을 만들어 넣으면 계속 돕니다.'
+}
+
+/**
+ * deps 배열이 **아예 없는** Effect 는 매 렌더 다시 실행됩니다.
+ * 그 안에서 상태를 바꾸면 → 리렌더 → 또 실행 → 또 바꾸고, 고리가 닫힙니다.
+ * 간선 그래프로는 잡히지 않습니다(읽는 deps 가 없으니 간선이 안 생김).
+ *
+ * 헛경보를 피하려고 **effect 본문에서 곧바로 부르는 setter** 만 셉니다.
+ * `setInterval(() => setX())` 처럼 콜백·타이머 안에서 부르는 것은
+ * effect 가 도는 그 순간에 실행되는 것이 아니라 나중에 불리므로 제외합니다.
+ */
+function everyRenderFindings(nodes) {
+  const out = []
+
+  for (const node of nodes) {
+    if (node.trigger !== 'every-render') continue
+
+    const direct = node.writes.filter(w => !w.nested && !w.deferred)
+    if (direct.length === 0) continue
+
+    const guarded = direct.every(w => w.guarded)
+    const states = direct.map(w => `'${w.state}'`).join(' · ')
+
+    out.push({
+      kind: 'loop',
+      severity: guarded ? 'warn' : 'risk',
+      label: `L${node.line} 은 deps 배열이 없어 매 렌더 실행됩니다 — 무한 루프 위험`,
+      note: `deps 배열이 없으면 렌더할 때마다 다시 실행됩니다. 그런데 이 Effect 는 ${states} 를 바꾸므로 다시 렌더되고, 그래서 또 실행됩니다.${loopGuardNote(guarded)}`,
+      lines: [node.line],
+      steps: [
+        { kind: 'effect', label: node.hook, detail: 'deps 배열 없음', line: node.line },
+        ...direct.map(setterStep),
+        { kind: 'loopback', label: `↺ 다시 L${node.line}`, line: node.line },
+      ],
+    })
+  }
+
+  return out
 }
 
 /** 같은 상태를 둘 이상의 Effect 가 바꾸는 경우 */

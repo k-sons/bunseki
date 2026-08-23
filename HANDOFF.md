@@ -61,11 +61,15 @@
   "쓴다"(`setters[].state`) 와 "읽는다"(`trigger==='deps'` 이고 deps 에 그 상태가 있음) 를
   간선으로 이어 그래프를 만든 뒤:
   - **무한 루프(loop)** — 고리. 스스로 되받거나(`[count]` 인데 `setCount`) 둘이 서로 되받음.
+    **deps 배열이 아예 없는 Effect**(매 렌더 재실행)가 상태를 바꾸는 것도 같은 카드.
     setter 가 전부 조건문 안이면 `warn`, 아니면 `risk`.
   - **경합(contention)** — 같은 상태를 Effect 둘 이상이 바꿈. 하나라도 비동기면 `risk`
     (응답 순서에 따라 늦게 온 옛 요청이 새 값을 덮어씀), 전부 동기면 `info`(선언 순서대로).
   - **연쇄(cascade)** — 고리가 아닌 간선을 최대 4단계까지 한 줄로 묶음. `info`.
   - 고리에 속한 간선은 연쇄로 중복 보고하지 않음. 항목은 심각도순 정렬, 컴포넌트당 최대 8개.
+- `timing.js`: setter 마다 **`nested`**(중첩 함수 안에서 불리는가) 추가.
+  `setInterval(() => setX())` 처럼 나중에 불리는 setter 를 매 렌더 루프로 오탐하지 않으려는 것.
+  매 렌더 루프는 `!nested && !deferred` 인 **곧바로 부르는 setter** 만 셉니다.
 - `index.js`: `timing` 을 변수로 뽑아 `interplay: analyzeInterplay(timing)` 추가.
 - UI: ⏱ 타이밍 섹션 **아래**에 **`🔗 Effect 사이 관계`** 섹션.
   카드마다 `[무한 루프]/[경합]/[연쇄]` 배지 + 제목 + 알약 흐름 + 설명.
@@ -77,12 +81,12 @@
 ## 3. 현재 상태 (스냅샷)
 
 - ✅ **작업트리 깨끗. 미커밋 없음.** `main` 최신 = A 트랙 3단계 커밋.
-- ✅ `npm test` → **50 pass / 0 fail**
-  (parser 10 · behavior 5 · examples 3 · timing 8 · stale-deps 11 · interplay 13)
+- ✅ `npm test` → **57 pass / 0 fail**
+  (parser 10 · behavior 5 · examples 3 · timing 9 · stale-deps 11 · interplay 19)
 - ✅ `npx vite build` 정상. 초기 번들 59KB, `@babel/parser` 는 `lib` 청크(≈300KB)로 **지연 로드**.
 - ✅ 브라우저 실제 렌더 확인(headless Chrome + `test/browser-verify.html`):
   `⏱ 타이밍 · deps 점검 / 위험 1 / deps 빠짐 2`, `⚠ [userId] 빠짐?` 칩,
-  `🔗 Effect 사이 관계 / 무한 루프 2 / 경합 1` 카드 4장까지 그려짐.
+  `🔗 Effect 사이 관계 / 무한 루프 3 / 경합 2` 카드 7장까지 그려짐.
 - ✅ 노이즈 점검: useMemo/useCallback/AbortController/ref 가 섞인 대시보드 컴포넌트에서
   **오탐 0**(deps·interplay 모두), ESLint `exhaustive-deps` 와 같은 지점만 지적.
 
@@ -119,7 +123,8 @@ test/                           # node --test. *.test.mjs + browser-verify.html
 
 ### ⚡ 동작 엔진의 effect 객체 (내부용)
 `collect.js` 가 만드는 raw effect: `{ hook, deps, depRoots, trigger, line, body, owner }`
-→ `timing.js` 가 소비해 `{ line, hook, trigger, deps, viaHook, isAsync, asyncKind,
+→ `timing.js` 가 소비해(setter 마다 `deferred`/`guarded`/`nested`)
+`{ line, hook, trigger, deps, viaHook, isAsync, asyncKind,
 hasCleanup, hasGuard, risk, staleDeps, setters[], timeline[] }` 로 바꿔 UI 에 넘김.
 **`owner`(AST 노드)는 UI 로 새어 나가지 않음** — timing 결과에는 담기지 않는다.
 
@@ -151,10 +156,7 @@ npx vite --port 5199 &
 
 - **4단계 — 상대 시간감** ← **여기부터**
   타임라인의 "대기" 구간을 실제 폭으로 표현(즉시 실행 vs 네트워크 응답 대기).
-- 남겨 둔 후보(3단계에서 의도적으로 안 건드린 것):
-  - **deps 배열이 없는 Effect 가 상태를 바꾸는 경우** — 매 렌더 재실행 → 무한 루프.
-    지금 그래프는 `trigger==='deps'` 인 Effect 로만 간선을 만들어서 잡히지 않음.
-    같은 `loop` 카드로 붙이면 자연스러움(단일 effect 라 3단계 범위 밖이라 보류).
+- (3단계에 이어 "deps 배열 없는 Effect" 도 같은 `loop` 카드로 붙임 — 완료)
 
 작업 방식(확립됨): **작게 구현 → 테스트 추가 → `npm test` → 브라우저 실제 렌더 확인 → 커밋.**
 

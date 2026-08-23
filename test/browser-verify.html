@@ -111,6 +111,9 @@ export default function Board({ query }) {
   useEffect(() => {
     setPage(1)
   }, [total])
+  useEffect(() => {
+    setTotal(items.length)
+  })
   return <div onClick={() => setPage(page + 1)}>{items.length}</div>
 }
 `

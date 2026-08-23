@@ -111,6 +111,8 @@ const SKIP_KEYS = new Set([
  *   setters — setter 호출이 각각
  *             - deferred: 비동기(await/.then)가 끝난 뒤 실행되는가
  *             - guarded : if 문 안에 감싸여 있는가 (`if (alive) setX()` 류)
+ *             - nested  : 중첩 함수 안에서 불리는가 (`setInterval(() => setX())` 류).
+ *                         effect 가 도는 그 순간에 실행되는 것이 아니라 나중에 불립니다.
  *   refs    — effect 가 **읽는** 이름들. deps 와 대조해 빠진 값을 찾는 데 씁니다.
  *             `user.id` 의 id, `{ id: 1 }` 의 키처럼 값을 읽는 자리가 아닌 이름과
  *             중첩 함수의 파라미터는 세지 않습니다.
@@ -122,10 +124,10 @@ function analyzeBody(effectBody, setterNames) {
   const found = []
   const refs = []
 
-  function visit(node, deferred, guarded) {
+  function visit(node, deferred, guarded, nested) {
     if (!node || typeof node !== 'object') return
     if (Array.isArray(node)) {
-      for (const n of node) visit(n, deferred, guarded)
+      for (const n of node) visit(n, deferred, guarded, nested)
       return
     }
     if (typeof node.type !== 'string') return
@@ -135,13 +137,14 @@ function analyzeBody(effectBody, setterNames) {
       case 'FunctionExpression':
       case 'ArrowFunctionExpression':
         // 중첩 함수: 그 함수 본문을 순서대로 다시 훑습니다.
-        visitFunctionBody(node, deferred, guarded)
+        //            여기서부터의 setter 는 effect 실행 중이 아니라 나중에 불릴 수 있습니다.
+        visitFunctionBody(node, deferred, guarded, true)
         return
 
       case 'IfStatement':
-        visit(node.test, deferred, guarded)
-        visit(node.consequent, deferred, true)
-        if (node.alternate) visit(node.alternate, deferred, true)
+        visit(node.test, deferred, guarded, nested)
+        visit(node.consequent, deferred, true, nested)
+        if (node.alternate) visit(node.alternate, deferred, true, nested)
         return
 
       case 'Identifier':
@@ -152,35 +155,35 @@ function analyzeBody(effectBody, setterNames) {
       case 'MemberExpression':
       case 'OptionalMemberExpression':
         // user.id → 읽는 값은 user 뿐, id 는 속성 이름입니다.
-        visit(node.object, deferred, guarded)
-        if (node.computed) visit(node.property, deferred, guarded)
+        visit(node.object, deferred, guarded, nested)
+        if (node.computed) visit(node.property, deferred, guarded, nested)
         return
 
       case 'ObjectProperty':
       case 'Property':
-        if (node.computed) visit(node.key, deferred, guarded)
-        visit(node.value, deferred, guarded)
+        if (node.computed) visit(node.key, deferred, guarded, nested)
+        visit(node.value, deferred, guarded, nested)
         return
 
       case 'ObjectMethod':
-        if (node.computed) visit(node.key, deferred, guarded)
-        visitFunctionBody(node, deferred, guarded)
+        if (node.computed) visit(node.key, deferred, guarded, nested)
+        visitFunctionBody(node, deferred, guarded, true)
         return
 
       case 'CallExpression':
       case 'OptionalCallExpression': {
         // .then(cb): 콜백은 응답 이후에 실행됩니다 → deferred
         if (calleeName(node) === 'then') {
-          visit(node.callee, deferred, guarded)
+          visit(node.callee, deferred, guarded, nested)
           for (const arg of node.arguments) {
-            if (isFunctionNode(arg)) visitFunctionBody(arg, true, guarded)
-            else visit(arg, deferred, guarded)
+            if (isFunctionNode(arg)) visitFunctionBody(arg, true, guarded, true)
+            else visit(arg, deferred, guarded, nested)
           }
           return
         }
         // setter 직접 호출
         if (node.callee && node.callee.type === 'Identifier' && setterNames.includes(node.callee.name)) {
-          found.push({ name: node.callee.name, line: lineOf(node), deferred, guarded })
+          found.push({ name: node.callee.name, line: lineOf(node), deferred, guarded, nested })
         }
         break
       }
@@ -188,27 +191,27 @@ function analyzeBody(effectBody, setterNames) {
 
     for (const key of Object.keys(node)) {
       if (SKIP_KEYS.has(key)) continue
-      visit(node[key], deferred, guarded)
+      visit(node[key], deferred, guarded, nested)
     }
   }
 
-  function visitFunctionBody(fnNode, deferredEntry, guarded) {
+  function visitFunctionBody(fnNode, deferredEntry, guarded, nested) {
     const body = fnNode.body
     if (!body) return
     if (body.type === 'BlockStatement') {
       let deferred = deferredEntry
       for (const stmt of body.body) {
         const awaitHere = containsDirectAwait(stmt)
-        visit(stmt, deferred || awaitHere, guarded)
+        visit(stmt, deferred || awaitHere, guarded, nested)
         if (awaitHere) deferred = true
       }
     } else {
       // 화살표 축약형 (본문이 식)
-      visit(body, deferredEntry || containsDirectAwait(body), guarded)
+      visit(body, deferredEntry || containsDirectAwait(body), guarded, nested)
     }
   }
 
-  visitFunctionBody(effectBody, false, false)
+  visitFunctionBody(effectBody, false, false, false)
   return { setters: found, refs }
 }
 

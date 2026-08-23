@@ -110,3 +110,15 @@ test('cleanup 만 있고 가드가 없으면 여전히 위험 (정리≠가드)'
   assert.equal(e.hasCleanup, true)
   assert.equal(e.risk, 'unmount-setstate')
 })
+
+test('중첩 함수 안에서 부르는 setState 는 nested 로 표시된다', () => {
+  // effect 본문에서 곧바로 부르는 것과, 콜백·타이머가 나중에 부르는 것을 구분합니다
+  const t = timingOf(`  useEffect(() => {
+    setLoading(true)
+    const timer = setInterval(() => setUser(null), 1000)
+    return () => clearInterval(timer)
+  }, [id])`)
+  const e = t.find(x => x.line)
+  assert.equal(e.setters.find(s => s.name === 'setLoading').nested, false)
+  assert.equal(e.setters.find(s => s.name === 'setUser').nested, true)
+})

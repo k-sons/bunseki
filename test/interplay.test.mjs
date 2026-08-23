@@ -195,3 +195,62 @@ test('Effect 가 하나도 없으면 빈 배열', () => {
   const found = interplayOf('  const noop = () => setCount(1)')
   assert.deepEqual(found, [])
 })
+
+// ─────────────────── deps 배열이 없는 Effect ───────────────────
+
+test('deps 배열이 없는 Effect 가 상태를 바꾸면 무한 루프 위험', () => {
+  const found = interplayOf(`  useEffect(() => {
+    setCount(count + 1)
+  })`)
+
+  const loop = found.find(f => f.kind === 'loop')
+  assert.ok(loop, '매 렌더 재실행 + 상태 변경 = 고리')
+  assert.equal(loop.severity, 'risk')
+  assert.deepEqual(loop.lines, [8])
+  assert.ok(loop.label.includes('deps 배열이 없어'))
+  assert.equal(loop.steps[loop.steps.length - 1].kind, 'loopback')
+})
+
+test('deps 배열이 없어도 조건문 안이면 위험도를 낮춘다', () => {
+  const found = interplayOf(`  useEffect(() => {
+    if (!ready) setReady(true)
+  })`)
+
+  const loop = found.find(f => f.kind === 'loop')
+  assert.ok(loop)
+  assert.equal(loop.severity, 'warn')
+})
+
+test('타이머·콜백 안에서만 바꾸는 것은 매 렌더 루프가 아니다', () => {
+  // effect 가 도는 그 순간에 실행되는 것이 아니라 나중에 불립니다
+  const found = interplayOf(`  useEffect(() => {
+    const t = setInterval(() => setCount(1), 1000)
+    return () => clearInterval(t)
+  })`)
+
+  assert.deepEqual(found, [])
+})
+
+test('비동기 응답 뒤에만 바꾸는 것도 매 렌더 루프로 세지 않는다', () => {
+  const found = interplayOf(`  useEffect(() => {
+    fetchUser(id).then((u) => setUser(u))
+  })`)
+
+  assert.deepEqual(found.filter(f => f.kind === 'loop'), [])
+})
+
+test('deps 가 빈 배열([])이면 마운트 1회라 루프가 아니다', () => {
+  const found = interplayOf(`  useEffect(() => {
+    setCount(1)
+  }, [])`)
+
+  assert.deepEqual(found, [])
+})
+
+test('deps 배열이 없어도 상태를 안 바꾸면 아무 말 하지 않는다', () => {
+  const found = interplayOf(`  useEffect(() => {
+    console.log(count)
+  })`)
+
+  assert.deepEqual(found, [])
+})
