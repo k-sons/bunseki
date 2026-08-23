@@ -189,3 +189,153 @@ export default function Panel() {
   const effectStep = loop.steps.find(s => s.kind === 'effect')
   assert.equal(effectStep.hook, 'useCounter')
 })
+
+/* ------------------------------------------------------------------
+ * 훅이 돌려준 핸들러
+ *
+ * 훅은 상태만 돌려주지 않습니다. `const { onSelect } = useSelection()` 처럼
+ * 콜백을 돌려주고 그걸 그대로 `onClick` 에 꽂는 형태가 흔합니다.
+ * setter 만 대응시키면 그 핸들러는 "아무 일도 안 하는 것" 처럼 보입니다.
+ * ---------------------------------------------------------------- */
+
+const RETURNS_FN = `import { useState, useEffect } from 'react'
+
+function useSelection() {
+  const [selected, setSelected] = useState(null)
+  const [detail, setDetail] = useState(null)
+  const onSelect = (id) => { setSelected(id) }
+  useEffect(() => {
+    fetchDetail(selected).then(setDetail)
+  }, [selected])
+  return { selected, onSelect }
+}
+
+function useToggle() {
+  const [on, setOn] = useState(false)
+  function flip() { setOn(true) }
+  return { on, flip }
+}
+
+function useCounter() {
+  const [n, setN] = useState(0)
+  return { n, inc: () => setN(n + 1) }
+}
+
+export default function Panel() {
+  const { onSelect } = useSelection()
+  const { flip: toggleIt } = useToggle()
+  const { inc } = useCounter()
+  return (
+    <div>
+      <button onClick={onSelect}>a</button>
+      <button onClick={() => toggleIt()}>b</button>
+      <button onClick={inc}>c</button>
+    </div>
+  )
+}
+`
+
+test('훅이 돌려준 콜백을 그대로 꽂아도 흐름이 이어진다', () => {
+  const steps = flowOf(panel(RETURNS_FN), 'onSelect()')
+
+  assert.deepEqual(
+    steps.map(s => s.kind),
+    ['event', 'call', 'setter', 'effect', 'call', 'wait', 'setter', 'rerender'],
+    '이벤트 → 훅이 돌려준 콜백 → 훅 상태 → 훅의 Effect 까지 이어져야 한다'
+  )
+  assert.equal(stepBy(steps, 'setSelected()').detail, '→  selected')
+})
+
+test('돌려준 콜백은 훅 구역 안에서 시작한다', () => {
+  const steps = flowOf(panel(RETURNS_FN), 'onSelect()')
+
+  assert.equal(stepBy(steps, '<button onClick>').hook, null, '이벤트는 구역 밖')
+
+  // 콜백부터 그 뒤 Effect 까지 한 구역 — UI 가 상자 하나로 묶는다
+  const inHook = steps.slice(1, -1)
+  assert.ok(inHook.every(s => s.hook === 'useSelection'), '구역이 중간에 끊기면 안 된다')
+  assert.equal(stepBy(steps, 'onSelect()').hookLine, 3, '머리말 클릭 = 훅 선언으로 이동')
+
+  assert.equal(steps[steps.length - 1].hook, null, '리렌더에서 구역이 닫힌다')
+})
+
+test('이름을 바꿔 받으면 훅 안에서 부르는 이름도 함께 알려준다', () => {
+  const steps = flowOf(panel(RETURNS_FN), 'toggleIt()')
+
+  const call = stepBy(steps, 'toggleIt()')
+  assert.equal(call.hook, 'useToggle')
+  assert.equal(call.hookInternal, 'flip', '훅 코드에서 찾을 이름은 flip')
+  assert.equal(stepBy(steps, 'setOn()').hook, 'useToggle')
+})
+
+test('그 자리에서 만들어 돌려준 콜백도 따라간다', () => {
+  // return { inc: () => setN(n + 1) } — 훅 안에 찾아갈 이름이 없는 형태
+  const steps = flowOf(panel(RETURNS_FN), 'inc()')
+
+  const call = stepBy(steps, 'inc()')
+  assert.equal(call.hook, 'useCounter')
+  assert.equal(call.hookInternal, null, '이름이 없으니 알려줄 내부 이름도 없다')
+  assert.equal(stepBy(steps, 'setN()').detail, '→  n')
+})
+
+test('배열로 돌려준 콜백도 따라간다', () => {
+  const comp = panel(`import { useState } from 'react'
+
+function useToggle() {
+  const [on, setOn] = useState(false)
+  const flip = () => setOn(true)
+  return [on, flip]
+}
+
+export default function Panel() {
+  const [on, toggle] = useToggle()
+  return <button onClick={toggle}>{on}</button>
+}
+`)
+
+  const steps = flowOf(comp, 'toggle()')
+  assert.equal(stepBy(steps, 'toggle()').hook, 'useToggle')
+  assert.equal(stepBy(steps, 'toggle()').hookInternal, 'flip')
+  assert.equal(stepBy(steps, 'setOn()').detail, '→  on')
+})
+
+/* --- 잡으면 안 되는 것 --- */
+
+test('컴포넌트에 같은 이름의 함수가 있으면 그쪽이 이긴다', () => {
+  // 실제로 불리는 것은 컴포넌트 자신의 함수입니다. 훅 구역을 치면 거짓말이 됩니다.
+  const comp = panel(`import { useState } from 'react'
+
+function useThing() {
+  const [a, setA] = useState(0)
+  const run = () => setA(1)
+  return { run }
+}
+
+export default function Panel() {
+  const [b, setB] = useState(0)
+  useThing()
+  const run = () => setB(1)
+  return <button onClick={run}>go</button>
+}
+`)
+
+  const steps = flowOf(comp, 'run()')
+  assert.equal(stepBy(steps, 'run()').hook, null, '컴포넌트 함수에는 훅 구역이 없다')
+  assert.ok(stepBy(steps, 'setB()'), '바뀌는 것은 컴포넌트 상태')
+  assert.ok(!stepBy(steps, 'setA()'))
+})
+
+test('import 한 훅이 돌려준 콜백은 여전히 경계다', () => {
+  const comp = panel(`import { useState } from 'react'
+import { useCart } from './cart'
+
+export default function Panel() {
+  const { addItem } = useCart()
+  return <button onClick={addItem}>add</button>
+}
+`)
+
+  const steps = comp.events[0].flows[0].steps
+  assert.ok(steps.every(s => !s.hook), '안을 못 보는 훅에는 구역을 치지 않는다')
+  assert.equal(steps.find(s => s.kind === 'boundary').detail, 'useCart 에서 받아옴')
+})

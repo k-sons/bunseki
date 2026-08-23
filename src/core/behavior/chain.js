@@ -140,6 +140,7 @@ function detectBoundary(handler, localFns, setterNames, propNames, outOfScope) {
  *   onClick={() => setOpen(true)}   — 인라인에서 직접
  *   onChange={handleSearch}          — 이름붙은 함수 참조
  *   onClick={reset}                  — reset 이 다시 clearAll 을 부르는 간접 호출
+ *   onClick={onSelect}               — 커스텀 훅이 돌려준 콜백 (localFns 에 합쳐져 들어옴)
  */
 function resolveHandlerSetters(handler, localFns, setterNames) {
   const setters = new Set(findSetterUsage(handler.expr, setterNames))
@@ -153,8 +154,15 @@ function resolveHandlerSetters(handler, localFns, setterNames) {
     const fn = localFns[fnName]
     if (!fn) return
 
-    // 선언된 줄을 함께 담아 스텝에서 그 위치로 이동할 수 있게 합니다
-    viaFns.push({ name: fnName, line: fn.line })
+    // 선언된 줄을 함께 담아 스텝에서 그 위치로 이동할 수 있게 합니다.
+    // 훅이 돌려준 콜백이면 그 함수가 사는 훅도 함께 — 훅 구역이 여기서 열립니다.
+    viaFns.push({
+      name: fnName,
+      line: fn.line,
+      hook: fn.hook || null,
+      hookLine: fn.hookLine || null,
+      hookInternal: fn.hookInternal || null,
+    })
     findSetterUsage(fn.node, setterNames).forEach(s => setters.add(s))
     // 메서드 호출(obj.foo())은 로컬 함수가 아니므로 따라가지 않습니다
     findDirectCalls(fn.node, setterNames).forEach(next => follow(next, depth + 1))
@@ -196,7 +204,9 @@ function buildFlow({ handler, setter, viaFns, setterToState, setterKind, setterH
       kind: 'call',
       label: `${fn.name}()`,
       line: fn.line,
-      hook: null,
+      hook: fn.hook || null,
+      hookLine: fn.hookLine || null,
+      hookInternal: fn.hookInternal || null,
       badges: [],
     })
   })

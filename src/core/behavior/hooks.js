@@ -81,20 +81,30 @@ function buildReturnMap(fnNode) {
 
   if (ret.type === 'ObjectExpression') {
     const props = {}
+    const fns = {}
     for (const p of ret.properties) {
       if (p.type !== 'ObjectProperty' && p.type !== 'Property') continue
       const key = p.key && (p.key.name || p.key.value)
-      const val = p.value && p.value.type === 'Identifier' ? p.value.name : null
-      if (key && val) props[key] = val
+      if (!key) continue
+      if (p.value && p.value.type === 'Identifier') props[key] = p.value.name
+      // `return { onSelect: (id) => setSel(id) }` — 이름 없이 그 자리에서 만든 콜백.
+      // 훅 안에 찾아갈 이름이 없으니 노드를 그대로 들고 갑니다.
+      else if (isFunctionNode(p.value)) fns[key] = p.value
     }
-    return { kind: 'object', props }
+    return { kind: 'object', props, fns }
   }
 
   if (ret.type === 'ArrayExpression') {
-    return {
-      kind: 'array',
-      items: ret.elements.map(e => (e && e.type === 'Identifier' ? e.name : null)),
-    }
+    const items = []
+    const fns = {}
+    ret.elements.forEach((e, i) => {
+      if (e && e.type === 'Identifier') items[i] = e.name
+      else {
+        items[i] = null
+        if (isFunctionNode(e)) fns[i] = e
+      }
+    })
+    return { kind: 'array', items, fns }
   }
 
   return null
@@ -110,6 +120,9 @@ export function analyzeHook(hook, skipNodes) {
     startLine: hook.startLine,
     states: collected.states,
     effects: collected.effects,
+    // 훅이 콜백을 돌려주는 형태(`return { onSelect }`)를 이어가려면
+    // 훅 안에 선언된 함수들도 들고 있어야 합니다.
+    localFns: collected.localFns,
     returnMap: buildReturnMap(hook.node),
   }
 }
@@ -163,13 +176,19 @@ function readPattern(idNode) {
  * 없으면(= 다른 파일에서 import) 그 훅에서 받아온 이름들을 기록해 두었다가,
  * 나중에 "범위 밖" 으로 표시하는 데 씁니다.
  *
- * @returns {{states, effects, outOfScope: Map<string, string>}}
+ * 훅이 **콜백을 돌려주는** 형태(`const { onSelect } = useSelection()`)도 이어 줍니다.
+ * `onClick={onSelect}` 처럼 그대로 꽂아 쓰는 게 흔한데, setter 만 대응시키면
+ * 그 핸들러는 아무 일도 안 하는 것처럼 보입니다.
+ *
+ * @returns {{states, effects, outOfScope: Map<string, string>, hookFns: Map<string, object>}}
  *   outOfScope: 이 코드에서 쓰는 이름 → 어느 훅에서 왔는지
+ *   hookFns: 이 코드에서 쓰는 이름 → 훅이 돌려준 함수 {node, line, hook, hookLine, hookInternal}
  */
 export function resolveHookCalls(componentNode, analyzedHooks, skipNodes) {
   const states = []
   const effects = []
   const outOfScope = new Map()
+  const hookFns = new Map()
   const mergedHooks = new Set()
 
   walk(componentNode, (n) => {
@@ -190,8 +209,23 @@ export function resolveHookCalls(componentNode, analyzedHooks, skipNodes) {
     const setterOf = {}
     for (const s of analyzed.states) if (s.setter) setterOf[s.setter] = s
 
+    const returnedFns = (analyzed.returnMap && analyzed.returnMap.fns) || {}
+
     // 훅이 내보낸 이름을 이 컴포넌트에서 쓰는 이름에 연결합니다
     for (const { exported, local } of readPattern(n.id)) {
+      // 그 자리에서 만들어 돌려준 콜백 — 훅 안에 찾아갈 이름이 없습니다
+      const inline = returnedFns[exported]
+      if (inline) {
+        hookFns.set(local, {
+          node: inline,
+          line: lineOf(inline),
+          hook: hookName,
+          hookLine: analyzed.startLine,
+          hookInternal: null,
+        })
+        continue
+      }
+
       let internal = exported
       if (analyzed.returnMap) {
         if (analyzed.returnMap.kind === 'object') internal = analyzed.returnMap.props[exported] || exported
@@ -200,7 +234,21 @@ export function resolveHookCalls(componentNode, analyzedHooks, skipNodes) {
       if (!internal) continue
 
       const src = setterOf[internal]
-      if (!src) continue
+      if (!src) {
+        // setter 가 아니면 훅이 돌려준 함수인지 봅니다 — `return { onSelect }`.
+        // 이걸 이어 두어야 `onClick={onSelect}` 가 흐름으로 이어집니다.
+        const fn = analyzed.localFns && analyzed.localFns[internal]
+        if (fn) {
+          hookFns.set(local, {
+            node: fn.node,
+            line: fn.line,
+            hook: hookName,
+            hookLine: analyzed.startLine,
+            hookInternal: internal !== local ? internal : null,
+          })
+        }
+        continue
+      }
 
       states.push({
         state: src.state,
@@ -239,5 +287,5 @@ export function resolveHookCalls(componentNode, analyzedHooks, skipNodes) {
     }
   }, skipNodes ? (node) => node !== componentNode && skipNodes.has(node) : undefined)
 
-  return { states, effects, outOfScope }
+  return { states, effects, outOfScope, hookFns }
 }

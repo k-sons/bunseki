@@ -72,11 +72,15 @@ export function parseBehavior(code) {
     const collected = collectComponent(comp, componentNodes)
     const hookUsage = resolveHookCalls(comp.node, analyzedHooks, componentNodes)
 
-    // 훅이 관리하는 상태·Effect 를 컴포넌트 것으로 끌어옵니다
+    // 훅이 관리하는 상태·Effect 를 컴포넌트 것으로 끌어옵니다.
+    // 훅이 돌려준 콜백은 컴포넌트가 부르는 이름으로 로컬 함수 목록에 합쳐,
+    // 핸들러를 따라갈 때 컴포넌트 함수와 똑같이 다뤄지게 합니다
+    // (이름이 겹치면 컴포넌트 자신의 것이 이깁니다).
     const merged = {
       ...collected,
       states: [...collected.states, ...hookUsage.states],
       effects: [...collected.effects, ...hookUsage.effects],
+      localFns: { ...Object.fromEntries(hookUsage.hookFns), ...collected.localFns },
     }
 
     const scope = {

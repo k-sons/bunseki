@@ -220,14 +220,22 @@ function useToggle() {
   return [on, setOn]
 }
 
+function useSelection() {
+  const [sel, setSel] = useState(null)
+  const onSelect = (id) => { setSel(id) }
+  return { sel, onSelect }
+}
+
 export default function Panel() {
   const { setQuery, hits } = useSearch()
   const [open, toggle] = useToggle()
+  const { onSelect: pick } = useSelection()
   const [tab, setTab] = useState('a')
   return (
     <div>
       <input onChange={(e) => setQuery(e.target.value)} />
       <button onClick={() => toggle(true)}>t</button>
+      <button onClick={pick}>s</button>
       <button onClick={() => setTab('b')}>b</button>
     </div>
   )
