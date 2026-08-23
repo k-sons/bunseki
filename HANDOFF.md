@@ -1,7 +1,7 @@
 # 🔄 Code Bunseki — 작업 인계문 (Handoff)
 
-> 작성: 2026-08-23 · 새 세션에서 이어서 작업하기 위한 인수인계 문서.
-> 이 문서 하나만 읽으면 현재 상태와 다음 할 일을 파악할 수 있게 정리함.
+> 갱신: 2026-08-23 · 새 세션에서 이어서 작업하기 위한 인수인계 문서.
+> **이 문서 하나만 읽으면 현재 상태와 다음 할 일을 파악할 수 있게** 정리합니다.
 
 ---
 
@@ -20,54 +20,54 @@
 
 ---
 
-## 2. 이번 세션에서 한 일 (요약)
+## 2. 여기까지 온 과정 (누적 요약)
 
-### (1) 진단 — 왜 결과가 불만족스러웠나
-- 4개 탭을 굴리던 `parser.js`가 **정규식 기반**이라 흔한 React 패턴에서 붕괴:
-  구조분해 props `{ }`·`memo`/`forwardRef` 래핑·타입스크립트 제네릭·여러 줄 시그니처.
-- 예: `function Card({ title })` → **1줄로** 오판, `memo(() => …)` 컴포넌트는 **아예 누락**.
-- 반면 `behavior/`(⚡동작 탭)는 **AST(@babel/parser) 기반**이라 견고했음. → 품질 격차의 원인.
+### (1) 정규식 파서 → AST 전면 재작성 — 커밋 `91f1a13`
+- 4개 탭을 굴리던 `parser.js`가 정규식 기반이라 흔한 React 패턴에서 붕괴했음:
+  구조분해 props `{ }` · `memo`/`forwardRef` 래핑 · TS 제네릭 · 여러 줄 시그니처.
+  (`function Card({ title })` → **1줄로 오판**, `memo(() => …)` 컴포넌트는 **아예 누락**)
+- `@babel/parser` AST 기반으로 다시 씀. **출력 형태(`ParseResult`)는 그대로 유지** →
+  렌더러 4개(highlighter/structure/metrics/flow) **무수정**.
+- `main.js`의 `analyze()`를 async 로 바꿔 **파서를 동적 import**
+  (babel 이 초기 번들에서 빠지고 ⚡동작 엔진과 같은 `lib` 청크를 공유).
 
-### (2) 수정 — 정규식 파서를 AST로 통일 ✅ **커밋됨 (`91f1a13`)**
-- `src/core/parser.js`를 **@babel/parser AST 기반으로 전면 재작성**.
-  **출력 형태(`ParseResult`)는 그대로 유지** → 렌더러 4개(highlighter/structure/metrics/flow) **무수정**.
-- `src/main.js`: `analyze()`를 async로 바꿔 **파서를 동적 import**(babel이 초기 번들에서 빠지고
-  ⚡동작 엔진과 같은 `lib` 청크 공유). export 리포트의 `[object Object]` 버그도 수정.
-- 결과: `Card` 1줄→6줄, `memo` 컴포넌트 감지, God Component 1줄→43줄, 섹션맵/관계 정확.
+### (2) 테스트 스위트 신설 — 커밋 `91f1a13`
+- `test/` + `npm test` (Node 내장 러너 `node --test`, **의존성 0**).
 
-### (3) 테스트 스위트 신설 ✅ **커밋됨 (`91f1a13`)**
-- `test/` + `npm test`(Node 내장 러너 `node --test`, **의존성 0**).
-- `parser.test.mjs`(하드 케이스+계약), `behavior.test.mjs`(연쇄+경계), `examples.test.mjs`(내장 예제),
-  `browser-verify.html`(브라우저 실제 렌더 하네스, 참고용).
+### (3) A 트랙 1단계 — 비동기 타이밍 — 커밋 `9ecf3d5`
+- `behavior/timing.js`: effect 마다 `isAsync` · **deferred setter**(await 이후·`.then` 콜백에서
+  실행되는 setState) · `hasCleanup` · `hasGuard`(`if (alive)` / `AbortController`) 판정.
+- **risk = 비동기 + 가드 없는 deferred setState → "언마운트 후 setState 위험"**.
+- UI 가 순서대로 그리기만 하면 되는 `timeline` 배열 → ⚡동작 탭 하단 가로 타임라인.
 
-### (4) A 트랙 1단계 — 비동기 타이밍 분석 ⚠️ **미커밋 (작업트리에만 있음)**
-- 사용자가 기능 확장 방향으로 **A(비동기 타이밍 시각화)** 선택 → ⚡동작 탭 **안에** 넣기로 함(옵션 a).
-- **`src/core/behavior/timing.js`(신규)**: effect마다
-  - `isAsync`(await/.then/fetch), **deferred setter**(await 이후·.then 콜백 = 응답 뒤 실행되는 setState.
-    `await 이전` setter는 즉시로 구분), `hasCleanup`, `hasGuard`(`if(alive)` / `AbortController`),
-  - **risk = 비동기 + 가드 없는 deferred setState → "언마운트 후 setState 위험"**,
-  - UI가 순서대로 그리기만 하면 되는 `timeline` 배열.
-- `behavior/index.js`: 컴포넌트마다 `timing` 필드 연결.
-- `ui/behavior.js` + `styles/index.css`: ⚡동작 탭 하단에 `⏱ 비동기 타이밍` 섹션(가로 타임라인+위험 배지).
-- **`test/timing.test.mjs`(신규, 8개)**: 위 판정 회귀 고정. 브라우저에서 실제 렌더도 확인함.
+### (4) A 트랙 2단계 — stale closure 감지 — 커밋 `de33b6f`
+- **`behavior/deps.js`(신규)**: effect 가 **읽는** 이름과 deps 를 대조해 빠진 값을 찾음.
+  결과 `{ name, kind: 'prop'|'state'|'local', line, inAsync }`.
+  - 반응값의 범위 = effect 를 감싼 함수(컴포넌트 **또는 커스텀 훅**) 본문 **최상위** 선언 + 파라미터.
+  - **헛경보를 안 내는 것이 이 검사의 전부**라 다음은 세지 않음:
+    모듈/전역 이름 · setter · `useRef`/`useDispatch` 결과 · `const` 리터럴 상수 ·
+    effect 안에서 선언한 이름(가림 포함) · `user.id` 의 속성 이름 · 중첩 함수 파라미터 ·
+    deps 배열이 아예 없는 effect(매 렌더 새로 만들어져 옛 값을 붙잡을 일이 없음).
+  - `[props.id]` 처럼 식으로 쓴 deps 도 **뿌리 이름**(`props`)으로 인정.
+- `collect.js`: effect 에 `owner`(감싼 함수 노드) · `depRoots` 추가.
+- `timing.js`: `analyzeSetters` → **`analyzeBody`** (한 번 훑어 setter + 참조를 함께 수집,
+  `await`/`.then` 이후 참조는 `inAsync`). 결과에 `staleDeps` + `kind:'stale'` 타임라인 스텝.
+- UI: 섹션 제목이 **`⏱ 타이밍 · deps 점검`**, `위험 N`/`deps 빠짐 N` 배지,
+  트랙 머리말에 **`⚠ [id] 빠짐?`** 칩 + 주황 경고 박스.
+  **deps 가 빠진 effect 는 동기여도** 이 섹션에 나옴(경고를 숨기지 않으려고).
 
 ---
 
 ## 3. 현재 상태 (스냅샷)
 
-- ✅ `npm test` → **26 pass / 0 fail** (parser 10, behavior 5, examples 3, timing 8)
-- ✅ `npx vite build` 정상. 초기 번들 59KB, `@babel/parser`는 `lib` 청크(≈300KB)로 **지연 로드**.
-- **커밋 상태**:
-  - `91f1a13 문제해결고도화전` = (2)(3) 파서 재작성 + 테스트. (이미 커밋)
-  - **미커밋 = A 트랙 1단계 전부** ↓
-    ```
-    M src/core/behavior/index.js      # timing 연결
-    M src/styles/index.css            # ⏱ 타이밍 CSS
-    M src/ui/behavior.js              # ⏱ 타이밍 UI
-    ?? src/core/behavior/timing.js    # 타이밍 엔진 (신규)
-    ?? test/timing.test.mjs           # 타이밍 테스트 (신규)
-    ```
-  - ⚠️ 이 인계문(`HANDOFF.md`)도 아직 미커밋.
+- ✅ **작업트리 깨끗. 미커밋 없음.** `main` 최신 = `de33b6f`.
+- ✅ `npm test` → **37 pass / 0 fail**
+  (parser 10 · behavior 5 · examples 3 · timing 8 · stale-deps 11)
+- ✅ `npx vite build` 정상. 초기 번들 59KB, `@babel/parser` 는 `lib` 청크(≈300KB)로 **지연 로드**.
+- ✅ 브라우저 실제 렌더 확인(headless Chrome + `test/browser-verify.html`):
+  `⏱ 타이밍 · deps 점검 / 위험 1 / deps 빠짐 2`, `⚠ [userId] 빠짐?` 칩까지 그려짐.
+- ✅ 노이즈 점검: useMemo/useCallback/AbortController/ref 가 섞인 대시보드 컴포넌트에서
+  **오탐 0**, ESLint `exhaustive-deps` 와 같은 지점만 지적.
 
 ---
 
@@ -83,20 +83,27 @@ src/
 │   ├── flow.js                 # 🔄 (relations 소비)
 │   └── behavior/               # ⚡ 동작 엔진 (AST)
 │       ├── index.js            # parseBehavior(code) → { components[], error }
-│       ├── collect.js          # AST에서 상태/effect/핸들러/컴포넌트 수집 (walk 등 공용 헬퍼)
+│       ├── collect.js          # 상태/effect/핸들러/컴포넌트 수집 (walk 등 공용 헬퍼)
 │       ├── chain.js            # 이벤트→setter→상태→Effect 연쇄(Step 배열)
 │       ├── hooks.js            # 같은 파일 커스텀 훅 추적 + 스코프 경계
-│       └── timing.js           # ⏱ 비동기 타이밍 + 위험 (이번에 신규)
+│       ├── timing.js           # ⏱ 비동기 타이밍 + 언마운트 위험 + 참조 수집
+│       └── deps.js             # ⚠ deps 에서 빠진 값 = stale closure
 ├── ui/
 │   ├── structure.js            # 🗺️
-│   └── behavior.js             # ⚡ + ⏱ 타이밍 UI (renderTimingSection)
+│   └── behavior.js             # ⚡ + ⏱ 타이밍/deps 점검 UI (renderTimingSection)
 └── data/examples.js            # 내장 예제 2개
 test/                           # node --test. *.test.mjs + browser-verify.html
 ```
 
 ### ⚠️ 반드시 지킬 계약 (`ParseResult`)
-`parser.js`를 또 손댈 땐 **출력 형태를 깨지 말 것**. 렌더러 4개가 이 필드를 그대로 읽음:
+`parser.js` 를 또 손댈 땐 **출력 형태를 깨지 말 것**. 렌더러 4개가 이 필드를 그대로 읽음:
 `imports · functions[{name,type,isAsync,params,startLine,endLine,lineCount,hooks:[{name,category}],handlers[],isExported,isDefault}] · constants · hooks[{name,line,isRN,category}] · jsxComponents · comments · exports · rnPatterns · sections(길이=totalLines) · relations[{from,to,type,isAsync}] · totalLines`
+
+### ⚡ 동작 엔진의 effect 객체 (내부용)
+`collect.js` 가 만드는 raw effect: `{ hook, deps, depRoots, trigger, line, body, owner }`
+→ `timing.js` 가 소비해 `{ line, hook, trigger, deps, viaHook, isAsync, asyncKind,
+hasCleanup, hasGuard, risk, staleDeps, setters[], timeline[] }` 로 바꿔 UI 에 넘김.
+**`owner`(AST 노드)는 UI 로 새어 나가지 않음** — timing 결과에는 담기지 않는다.
 
 ---
 
@@ -108,32 +115,41 @@ npm test           # 전체 테스트 (node --test "test/**/*.test.mjs")
 npx vite build     # 프로덕션 빌드
 
 # 브라우저 실제 렌더 확인 (선택):
-npx vite &
-"<Chrome 경로>" --headless --disable-gpu --virtual-time-budget=6000 \
-  --dump-dom "http://localhost:5173/test/browser-verify.html"
+npx vite --port 5199 &
+"/c/Program Files/Google/Chrome/Application/chrome.exe" --headless --disable-gpu \
+  --virtual-time-budget=8000 --dump-dom "http://localhost:5199/test/browser-verify.html"
 ```
 
 ---
 
 ## 6. 다음 할 일 (A 트랙 이어가기)
 
-사용자가 승인한 순서. **먼저 미커밋 1단계를 커밋할지 물어볼 것.**
+사용자가 승인한 순서. 1·2단계는 완료·커밋됨.
 
-- **2단계 — stale closure 감지**: 비동기 콜백이 참조하는 변수가 effect deps에서 빠졌는지
-  검사 → `⚠ [id] 빠짐?` 힌트. (`timing.js`에 deps vs 콜백 참조 비교 추가)
-- **3단계 — 다중 effect 경합**: 같은 상태를 여러 effect가 건드릴 때 실행 순서/충돌 시각화.
+- **3단계 — 다중 effect 경합** ← **여기부터**
+  같은 상태를 여러 effect 가 건드릴 때 실행 순서/충돌을 보여주기.
+  예: effect A 가 `setUser` 하고 effect B 의 deps 에 `user` 가 있으면 → A 다음 B 가 도는 연쇄.
+  두 effect 가 같은 상태를 서로 되받으면 → 무한 루프 위험.
+  (재료는 이미 있음: `timing[].setters[].state` 와 `timing[].deps`. `chain.js` 의
+  "state → 그 state 를 deps 로 쓰는 effect" 탐색 로직도 참고.)
 - **4단계 — 상대 시간감**: 타임라인의 "대기" 구간을 실제 폭으로 표현.
 
-작업 방식(이 세션에서 확립): **작게 구현 → 테스트 추가 → `npm test` → 브라우저 렌더 확인**.
+작업 방식(확립됨): **작게 구현 → 테스트 추가 → `npm test` → 브라우저 실제 렌더 확인 → 커밋.**
 
 ---
 
 ## 7. 환경/함정 메모
 
-- **OS Windows**. Node로 `src` 모듈을 직접 import할 땐 절대경로 대신 **`file:///C:/...` URL** 필요
-  (테스트는 상대경로 import라 문제없음).
-- `npm test`는 **`node --test "test/**/*.test.mjs"`**. 디렉터리 인자(`node --test test/`)는 Node24에서
-  파일로 오인해 실패하므로 **glob 패턴 유지**.
-- `.html` 하네스는 `node --test`가 무시함(참고용).
-- babel 지연 로드 설계 유지: `parser.js`/`behavior/`는 **정적 import 금지**, main에서 **동적 import**.
-- 임시 검증 파일은 repo 루트에 만들고 반드시 삭제(작업트리 깨끗이). 임시물은 `$CLAUDE_JOB_DIR/tmp` 사용.
+- **OS Windows**. Node 로 `src` 모듈을 직접 import 할 땐 절대경로 대신
+  **`file:///C:/...` URL** 필요 (테스트는 상대경로 import 라 문제없음).
+- `npm test` 는 **`node --test "test/**/*.test.mjs"`**. 디렉터리 인자(`node --test test/`)는
+  Node24 에서 파일로 오인해 실패하므로 **glob 패턴 유지**.
+- `.html` 하네스는 `node --test` 가 무시함(참고용).
+- babel 지연 로드 설계 유지: `parser.js`/`behavior/` 는 **정적 import 금지**,
+  main 에서 **동적 import**.
+- **줄바꿈이 파일마다 섞여 있음**(CRLF/LF). `core.autocrlf=true` 라 커밋 시 LF 로 정규화되니,
+  스크립트로 파일을 고칠 땐 **읽을 때 `\n` 으로 맞추고 원래 형식으로 되돌려 쓸 것**
+  (안 그러면 파일 전체가 diff 로 잡힘).
+- **오탐 정책**: `deps.js` 의 판정은 **놓치는 쪽(false negative)이 헛경보보다 낫다**는 기준.
+  규칙을 넓힐 땐 `test/stale-deps.test.mjs` 의 "잡으면 안 되는 것" 6개를 먼저 확인.
+- 임시 검증 파일은 repo 밖(세션 scratchpad)에 만들 것. 작업트리는 깨끗하게 유지.
