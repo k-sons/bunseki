@@ -458,3 +458,75 @@ export default function A({ id }) {
 }`)
   assert.equal(ev[0].some(s => s.kind === 'wait'), false)
 })
+
+
+/* ── 핸들러 안의 관문 ───────────────────────────────────────────────────────
+ * C) 가 Effect 에 한 것과 같은 문제입니다 — 관문이 없으면 setter 가
+ * **언제나** 불리는 것처럼 보입니다.
+ */
+
+test('핸들러의 이른 반환도 관문으로 선다 — 부르는 자리 바로 뒤', () => {
+  const [ev] = handlerFlows(`import { useState } from 'react'
+export default function A({ id }) {
+  const [sel, setSel] = useState(null)
+  function pick() {
+    if (!id) return
+    setSel(id)
+  }
+  return <button onClick={pick}>a</button>
+}`)
+  const steps = ev[0]
+  const i = steps.findIndex(s => s.kind === 'call')
+  assert.equal(steps[i + 1].kind, 'gate')
+  assert.equal(steps[i + 1].label, '!id 면 중단')
+  assert.match(steps[i + 1].note, /아래 단계는 실행되지 않습니다/)
+})
+
+test('관문 문장은 Effect 쪽과 글자까지 같다', () => {
+  const [ev] = handlerFlows(`import { useState, useEffect } from 'react'
+export default function A({ id }) {
+  const [sel, setSel] = useState(null)
+  const [tab, setTab] = useState('a')
+  useEffect(() => {
+    if (!id) return
+    setSel(id)
+  }, [id, tab])
+  return <button onClick={() => { if (!id) return; setTab('b') }}>a</button>
+}`)
+  const gate = ev[0].find(s => s.kind === 'gate')
+  const effectGate = ev[0].filter(s => s.kind === 'gate')
+  assert.equal(gate.label, '!id 면 중단')
+  assert.ok(effectGate.every(g => g.label === '!id 면 중단'), '두 자리가 같은 문장을 쓴다')
+})
+
+test('조건이 없는 핸들러에는 관문이 없다', () => {
+  const [ev] = handlerFlows(`import { useState } from 'react'
+export default function A() {
+  const [n, setN] = useState(0)
+  return <button onClick={() => setN(1)}>a</button>
+}`)
+  assert.equal(ev[0].some(s => s.kind === 'gate'), false)
+})
+
+test('else 가 붙은 if 는 핸들러에서도 관문이 아니다', () => {
+  const [ev] = handlerFlows(`import { useState } from 'react'
+export default function A({ id }) {
+  const [n, setN] = useState(0)
+  return <button onClick={() => { if (id) { setN(1) } else { setN(2) } }}>a</button>
+}`)
+  assert.equal(ev[0].some(s => s.kind === 'gate'), false)
+})
+
+test('응답을 기다린 뒤의 이른 반환은 핸들러에서도 관문이 아니다', () => {
+  const [ev] = handlerFlows(`import { useState } from 'react'
+export default function A({ id }) {
+  const [sel, setSel] = useState(null)
+  async function pick() {
+    const v = await api.get(id)
+    if (!v) return
+    setSel(v)
+  }
+  return <button onClick={pick}>a</button>
+}`)
+  assert.equal(ev[0].some(s => s.kind === 'gate'), false, '실행을 막는 관문이 아니다')
+})

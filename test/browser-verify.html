@@ -253,6 +253,7 @@ export default function Save({ id }) {
   const [err, setErr] = useState(null)
   const [done, setDone] = useState(false)
   async function save() {
+    if (!id) return
     setSaving(true)
     try {
       await api.save(id, 3000)
@@ -276,6 +277,11 @@ export default function Save({ id }) {
     })
     log(`  흐름 ${i + 1}: ` + items.join('  →  '))
   })
+  const hGate = beH.querySelector('.behavior-detail .behavior-step--gate')
+  log('  핸들러 관문: ' + (hGate
+    ? '표시 "' + hGate.querySelector('.behavior-step__num').textContent.trim() + '" / ' +
+      hGate.querySelector('.behavior-step__label').textContent.trim()
+    : '없음 (있어야 함!)'))
   log('  대기 스텝: ' + beH.querySelectorAll('.behavior-detail .behavior-wait').length +
     '개 / 오류 배지: ' + [...beH.querySelectorAll('.behavior-detail .behavior-step__badge')]
       .map(n => n.textContent.trim()).join(', '))

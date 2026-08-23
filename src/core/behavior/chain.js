@@ -50,6 +50,7 @@ export function buildEvents(compName, collected, scope = {}, code = null) {
   return handlers.map(handler => {
     const { setters, viaFns, bodies } = resolveHandlerSetters(handler, localFns, setterNames)
     const handlerAsync = describeHandlerAsync(bodies, setterNames)
+    const handlerGates = collectHandlerGates(bodies, code)
 
     // 응답 전에 바뀌는 상태를 먼저 — 눌렀을 때 곧바로 일어나는 일이 위에 오게.
     const ordered = handlerAsync
@@ -61,7 +62,7 @@ export function buildEvents(compName, collected, scope = {}, code = null) {
 
     const flows = ordered.map(setter =>
       buildFlow({
-        handler, setter, viaFns, handlerAsync,
+        handler, setter, viaFns, handlerAsync, handlerGates,
         setterToState, setterKind, setterHook,
         effects, setterNames, code,
       })
@@ -241,9 +242,31 @@ function describeHandlerAsync(bodies, setterNames) {
 }
 
 /**
+ * 핸들러 안의 관문 — `onClick={() => { if (!id) return; setX() }}`.
+ *
+ * Effect 에 C) 가 한 것과 같은 문제입니다. 관문이 없으면 setter 가 **언제나**
+ * 불리는 것처럼 보입니다. ⏱ 타임라인·Effect 연쇄와 **같은 문장**을 씁니다.
+ *
+ * 본문이 여럿이면(인라인 화살표 + 거쳐 가는 함수) 모아서 줄 번호 순으로 놓습니다.
+ */
+function collectHandlerGates(bodies, code) {
+  const gates = []
+  const seen = new Set()
+  for (const body of bodies) {
+    for (const g of findGates(body, code)) {
+      const key = `${g.line}:${g.cond}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      gates.push(g)
+    }
+  }
+  return gates.sort((a, b) => (a.line == null ? Infinity : a.line) - (b.line == null ? Infinity : b.line))
+}
+
+/**
  * setter 하나에서 시작하는 흐름을 Step 배열로 평탄화합니다.
  */
-function buildFlow({ handler, setter, viaFns, handlerAsync, setterToState, setterKind, setterHook, effects, setterNames, code }) {
+function buildFlow({ handler, setter, viaFns, handlerAsync, handlerGates, setterToState, setterKind, setterHook, effects, setterNames, code }) {
   const steps = []
 
   steps.push({
@@ -263,6 +286,17 @@ function buildFlow({ handler, setter, viaFns, handlerAsync, setterToState, sette
       hook: fn.hook || null,
       hookLine: fn.hookLine || null,
       hookInternal: fn.hookInternal || null,
+      badges: [],
+    })
+  })
+
+  // 되돌아 나갈 수 있는 자리 — 이 아래 단계로 못 갈 수 있다는 뜻입니다.
+  // Effect 연쇄가 그렇듯 줄 번호로 세우지 않고 **부르는 자리 바로 뒤에 모읍니다**.
+  ;(handlerGates || []).forEach(g => {
+    steps.push({
+      kind: 'gate',
+      ...describeGate(g),
+      hook: null,
       badges: [],
     })
   })
