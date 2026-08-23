@@ -324,6 +324,122 @@ test('관문은 코드에 적힌 차례대로, 즉시 setter 와 섞여 놓인�
   assert.deepEqual(kinds, ['setter', 'gate', 'setter'], 'setLoading → 관문 → setUser')
 })
 
+/* ── 언마운트 가드는 **응답 뒤**의 이른 반환만 ──────────────────────────────
+ * `findGates` 가 await 에서 멈추는 것과 같은 경계입니다. 응답 **전**의
+ * `if (!id) return` 은 실행을 막는 관문일 뿐, "응답이 온 시점에 아직 살아 있는가" 를
+ * 묻지 않으므로 뒤의 setState 를 지키지 못합니다.
+ */
+
+test('응답 전의 이른 반환은 언마운트 가드가 아니다 — .then', () => {
+  const t = timingOf(`  useEffect(() => {
+    if (!id) return
+    fetchUser(id).then(setUser)
+  }, [id])`)
+  const e = firstAsync(t)
+  assert.equal(e.risk, 'unmount-setstate', '관문이 위험 경고를 덮어서는 안 된다')
+  assert.equal(e.hasGuard, false)
+  assert.equal(e.gates.length, 1, '관문은 관문대로 그대로 보인다')
+})
+
+test('응답 전의 이른 반환은 언마운트 가드가 아니다 — await', () => {
+  const t = timingOf(`  useEffect(() => {
+    async function load() {
+      if (!id) return
+      const u = await fetchUser(id)
+      setUser(u)
+    }
+    load()
+  }, [id])`)
+  assert.equal(firstAsync(t).risk, 'unmount-setstate')
+})
+
+test('try 블록 안의 가드도 가드다 — 헛경보를 내면 안 된다', () => {
+  // 블록 안 문장도 함수 본문과 똑같이 순서대로 봐야 이 가드가 보입니다
+  const t = timingOf(`  useEffect(() => {
+    let alive = true
+    async function load() {
+      try {
+        const u = await fetchUser(id)
+        if (!alive) return
+        setUser(u)
+      } catch (e) { console.error(e) }
+    }
+    load()
+    return () => { alive = false }
+  }, [id])`)
+  const e = firstAsync(t)
+  assert.equal(e.risk, null)
+  assert.equal(e.hasGuard, true)
+})
+
+test('try 블록 안에 가드가 없으면 위험은 그대로다', () => {
+  const t = timingOf(`  useEffect(() => {
+    async function load() {
+      try {
+        const u = await fetchUser(id)
+        setUser(u)
+      } catch (e) { console.error(e) }
+    }
+    load()
+  }, [id])`)
+  assert.equal(firstAsync(t).risk, 'unmount-setstate')
+})
+
+
+/* ── 다지기: 틀린 말을 하지 않기 ────────────────────────────────────────────
+ * 실제형 파일로 훑다 나온 것들. 둘 다 "못 잡는 것" 이 아니라 **틀리게 적는 것** 이었습니다.
+ */
+
+const parseOf = (code) => parseBehavior(code).components[0].timing
+
+test('redux dispatch 는 언마운트 위험이 아니다 — 바뀌는 대상이 컴포넌트 밖에 있다', () => {
+  const t = parseOf(`import { useEffect } from 'react'
+import { useDispatch } from 'react-redux'
+export default function A({ id }) {
+  const dispatch = useDispatch()
+  useEffect(() => {
+    api.load(id).then((d) => dispatch({ type: 'loaded', d }))
+  }, [id, dispatch])
+  return <div />
+}`)
+  const e = t.find(x => x.isAsync)
+  assert.equal(e.risk, null, '없는 컴포넌트에 상태를 쓰는 게 아니라 살아 있는 스토어로 보낸다')
+  assert.equal(e.hasGuard, false, '위험이 아닌 것을 "가드됨" 으로 적어서도 안 된다')
+  assert.ok(e.timeline.some(s => s.kind === 'setter' && s.label === 'dispatch()'),
+    '흐름에서는 여전히 보여야 한다')
+})
+
+test('컴포넌트 상태가 섞여 있으면 그쪽 위험은 그대로 잡는다', () => {
+  const t = parseOf(`import { useState, useEffect } from 'react'
+import { useDispatch } from 'react-redux'
+export default function A({ id }) {
+  const dispatch = useDispatch()
+  const [d, setD] = useState(null)
+  useEffect(() => {
+    api.load(id).then((r) => { dispatch({ type: 'x' }); setD(r) })
+  }, [id, dispatch])
+  return <div>{d}</div>
+}`)
+  assert.equal(t.find(x => x.isAsync).risk, 'unmount-setstate')
+})
+
+test('바뀌는 상태가 없으면 리렌더도 없다', () => {
+  // fire and forget 인 effect 에 "리렌더" 를 적으면 틀린 말이 된다
+  const e = firstAsync(timingOf(`  useEffect(() => {
+    fetch('/log', { method: 'POST', body: id })
+  }, [id])`))
+  assert.equal(e.timeline.some(s => s.kind === 'rerender'), false)
+  assert.ok(e.timeline.some(s => s.kind === 'async-wait'), '기다리는 구간은 그대로 있다')
+})
+
+test('상태를 바꾸면 리렌더가 붙는다', () => {
+  const e = firstAsync(timingOf(`  useEffect(() => {
+    fetchUser(id).then(setUser)
+  }, [id])`))
+  assert.ok(e.timeline.some(s => s.kind === 'rerender'))
+})
+
+
 /* ── 나가는 길에 뭔가 하고 나가는 이른 반환 ─────────────────────────────────
  * 흐름을 끝내는 건 블록의 **마지막** 문장입니다. 앞에 문장이 몇 개 더 있어도
  * 그 뒤는 여전히 조건이 거짓일 때만 실행됩니다.

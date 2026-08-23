@@ -35,14 +35,22 @@ import { findStaleDeps } from './deps.js'
 export function analyzeEffectsTiming(effects, states, code) {
   const setterNames = states.map(s => s.setter).filter(Boolean)
   const setterToState = {}
-  for (const s of states) if (s.setter) setterToState[s.setter] = s.state || null
+  // 바꾸는 대상이 컴포넌트 밖에 있는 것(redux dispatch) — 흐름에는 그리되
+  // **언마운트 위험으로는 세지 않습니다**. 없는 컴포넌트에 상태를 쓰는 게 아니라
+  // 살아 있는 스토어에 보내는 것이라 React 가 경고하지 않습니다.
+  const storeSetters = new Set()
+  for (const s of states) {
+    if (!s.setter) continue
+    setterToState[s.setter] = s.state || null
+    if (s.kind === 'store') storeSetters.add(s.setter)
+  }
 
   return effects
     .filter(e => e && e.body)
-    .map(e => analyzeOne(e, setterNames, setterToState, code))
+    .map(e => analyzeOne(e, setterNames, setterToState, storeSetters, code))
 }
 
-function analyzeOne(effect, setterNames, setterToState, code) {
+function analyzeOne(effect, setterNames, setterToState, storeSetters, code) {
   const body = effect.body
 
   // ── 비동기 여부 ──
@@ -64,7 +72,9 @@ function analyzeOne(effect, setterNames, setterToState, code) {
   const { setters, refs } = analyzeBody(body, setterNames)
   const immediate = setters.filter(s => !s.deferred)
   const deferred = setters.filter(s => s.deferred)
-  const unguardedDeferred = deferred.filter(s => !s.guarded)
+  // 위험을 묻는 대상은 **컴포넌트 상태**뿐입니다 (store 는 밖에 있어 언마운트와 무관)
+  const deferredState = deferred.filter(s => !storeSetters.has(s.name))
+  const unguardedDeferred = deferredState.filter(s => !s.guarded)
 
   // ── 여기서 멈출 수 있는 지점 (이른 반환 조건) ──
   const gates = findGates(body, code)
@@ -74,11 +84,11 @@ function analyzeOne(effect, setterNames, setterToState, code) {
   const hasAbort = usesAbort(body)
 
   // ── 위험 판정 ──
-  const risk = (isAsync && deferred.length > 0 && !hasAbort && unguardedDeferred.length > 0)
+  const risk = (isAsync && deferredState.length > 0 && !hasAbort && unguardedDeferred.length > 0)
     ? 'unmount-setstate'
     : null
 
-  const hasGuard = hasAbort || (deferred.length > 0 && unguardedDeferred.length === 0)
+  const hasGuard = hasAbort || (deferredState.length > 0 && unguardedDeferred.length === 0)
 
   // ── deps 에서 빠진 값 (stale closure) ──
   const staleDeps = findStaleDeps({
@@ -170,6 +180,11 @@ function analyzeBody(effectBody, setterNames) {
         if (node.alternate) visit(node.alternate, deferred, true, nested, true, onError)
         return
 
+      case 'BlockStatement':
+        // try 블록 · 그냥 블록 — 함수 본문과 똑같이 문장 순서대로 봅니다.
+        visitBlock(node, deferred, guarded, nested, inIf, onError)
+        return
+
       case 'CatchClause':
         // try/catch 의 catch 절도 `.catch(cb)` 와 같은 자리 — 에러일 때만 실행됩니다.
         // 잡은 오류의 이름(`catch (err)`)은 **읽는 값이 아니라 새로 묶는 이름**이라
@@ -243,20 +258,35 @@ function analyzeBody(effectBody, setterNames) {
     const body = fnNode.body
     if (!body) return
     if (body.type === 'BlockStatement') {
-      let deferred = deferredEntry
-      let guardedHere = guarded
-      for (const stmt of body.body) {
-        const awaitHere = containsDirectAwait(stmt)
-        visit(stmt, deferred || awaitHere, guardedHere, nested, inIf, onError)
-        if (awaitHere) deferred = true
-        // if (!alive) return — 이 뒤의 문장은 조건이 참일 때만 실행됩니다.
-        // if (alive) { … } 로 감싼 것과 같은 보호라 똑같이 가드로 봅니다.
-        // (inIf 는 올리지 않습니다 — 이 조건은 관문 스텝으로 따로 보여집니다)
-        if (isEarlyReturnGuard(stmt)) guardedHere = true
-      }
+      visitBlock(body, deferredEntry, guarded, nested, inIf, onError)
     } else {
       // 화살표 축약형 (본문이 식)
       visit(body, deferredEntry || containsDirectAwait(body), guarded, nested, inIf, onError)
+    }
+  }
+
+  /**
+   * 블록 하나를 **문장 순서대로** 훑습니다 — await 를 지나면 그 뒤는 응답 뒤(deferred),
+   * 응답 뒤의 이른 반환은 그 뒤를 지키는 가드.
+   *
+   * 함수 본문뿐 아니라 `try { … }` 같은 **그냥 블록에도 같은 훑기가 필요합니다**.
+   * 안 그러면 try 안의 `if (!alive) return` 을 못 봐 헛경보가 납니다.
+   */
+  function visitBlock(block, deferredEntry, guarded, nested, inIf, onError) {
+    let deferred = deferredEntry
+    let guardedHere = guarded
+    for (const stmt of block.body) {
+      const awaitHere = containsDirectAwait(stmt)
+      visit(stmt, deferred || awaitHere, guardedHere, nested, inIf, onError)
+      if (awaitHere) deferred = true
+      // if (!alive) return — 이 뒤의 문장은 조건이 참일 때만 실행됩니다.
+      // if (alive) { … } 로 감싼 것과 같은 보호라 똑같이 가드로 봅니다.
+      // (inIf 는 올리지 않습니다 — 이 조건은 관문 스텝으로 따로 보여집니다)
+      //
+      // **응답을 기다린 뒤여야만** 언마운트 가드입니다. `findGates` 가 await 에서 멈추는 것과
+      // 같은 경계입니다 — 응답 전의 `if (!id) return` 은 실행을 막는 관문일 뿐,
+      // "응답이 온 시점에 아직 살아 있는가" 를 묻지 않으므로 뒤의 setState 를 지키지 못합니다.
+      if (deferred && isEarlyReturnGuard(stmt)) guardedHere = true
     }
   }
 
@@ -511,7 +541,11 @@ function buildTimeline({ effect, isAsync, asyncKind, immediate, deferred, hasCle
     }
   }
 
-  steps.push({ kind: 'rerender', label: '리렌더' })
+  // 바뀌는 상태가 하나도 없으면 리렌더도 없습니다 — fire and forget 인 effect
+  // (`fetch('/log')` · `api.track()`)에 "리렌더" 를 적으면 틀린 말이 됩니다.
+  if (immediate.length > 0 || deferred.length > 0) {
+    steps.push({ kind: 'rerender', label: '리렌더' })
+  }
 
   if (hasCleanup) {
     steps.push({ kind: 'cleanup', label: '정리(cleanup) 실행', note: 'deps 변경·언마운트 시' })
