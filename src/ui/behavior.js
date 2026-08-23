@@ -202,7 +202,7 @@ function renderTimingTrack(effect, onNavigate) {
   const triggerStep = effect.timeline.find(s => s.kind === 'trigger')
   head.innerHTML = `
     <span class="timing-track__when">${esc(triggerStep ? triggerStep.label : effect.hook)}</span>
-    ${effect.viaHook ? `<span class="hl-badge">${esc(effect.viaHook)}</span>` : ''}
+    ${effect.viaHook ? `<span class="hl-badge hl-badge--inhook">🪝 ${esc(effect.viaHook)} 안</span>` : ''}
     ${stale.length ? `<span class="timing-track__stale">⚠ [${esc(stale.join(', '))}] 빠짐?</span>` : ''}
     ${effect.hasCleanup ? '<span class="timing-track__flag">정리 있음</span>' : '<span class="timing-track__flag timing-track__flag--off">정리 없음</span>'}
     ${effect.line ? `<span class="timing-track__line">L${effect.line}</span>` : ''}
@@ -386,7 +386,11 @@ function renderInterplayPill(step, onNavigate) {
     : step.phase === 'async' ? '<span class="timing-pill__guard">응답 뒤</span>'
     : step.guarded ? '<span class="timing-pill__guard">조건부</span>'
     : ''
-  pill.innerHTML = `<span class="timing-pill__label">${esc(step.label)}${detail}</span>${tag}`
+  // 얽힌 Effect 가 커스텀 훅 안에 있으면 고칠 자리가 그 훅 파일입니다
+  const inHook = step.hook
+    ? `<span class="timing-pill__hook">🪝 ${esc(step.hook)}</span>`
+    : ''
+  pill.innerHTML = `<span class="timing-pill__label">${esc(step.label)}${detail}</span>${inHook}${tag}`
 
   if (step.line && onNavigate) {
     pill.classList.add('is-clickable')
@@ -411,14 +415,35 @@ function renderEventDetail(comp, ev, onNavigate) {
     const flowEl = document.createElement('div')
     flowEl.className = 'behavior-flow stagger'
 
+    // 이어지는 같은 훅 스텝을 한 구역으로 묶습니다 — 흐름이 커스텀 훅 안으로
+    // 들어갔다가 리렌더에서 다시 컴포넌트로 나오는 모습이 그대로 보이도록.
     let num = 0
+    let zone = null
+    let zoneHook = null
+
     flow.steps.forEach((step, idx) => {
-      if (idx > 0) flowEl.appendChild(renderConnector(step))
+      const hook = step.hook || null
+      if (zoneHook && hook !== zoneHook) {
+        zone = null
+        zoneHook = null
+      }
+      const opening = hook && !zoneHook
+
+      // 구역으로 들어가는 화살표는 상자 바깥에 둡니다 — 밖에서 안으로 들어가는 모습
+      if (idx > 0) (opening ? flowEl : zone || flowEl).appendChild(renderConnector(step))
+
+      if (opening) {
+        zone = renderHookZone(step, onNavigate)
+        zoneHook = hook
+        flowEl.appendChild(zone)
+      }
+
+      const target = zone || flowEl
       if (step.kind === 'wait') {
-        flowEl.appendChild(renderWaitStep(step))
+        target.appendChild(renderWaitStep(step))
         return
       }
-      flowEl.appendChild(renderStep(step, ++num, onNavigate))
+      target.appendChild(renderStep(step, ++num, onNavigate))
     })
 
     wrap.appendChild(flowEl)
@@ -431,6 +456,34 @@ function renderEventDetail(comp, ev, onNavigate) {
   }
 
   return wrap
+}
+
+/**
+ * 커스텀 훅 구역의 머리말.
+ *
+ * 여기 묶인 스텝들은 **코드가 적힌 자리**가 아니라 **상태와 Effect 가 사는 자리**가
+ * 훅 안이라는 뜻입니다. `setQuery()` 는 컴포넌트에서 부르지만 그 상태는 훅 것이고,
+ * 이어지는 Effect 도 훅 안에서 다시 실행됩니다.
+ */
+function renderHookZone(step, onNavigate) {
+  const box = document.createElement('div')
+  box.className = 'behavior-hookzone'
+
+  const head = document.createElement('div')
+  head.className = 'behavior-hookzone__head'
+  head.innerHTML = `
+    <span class="behavior-hookzone__name">🪝 ${esc(step.hook)}</span>
+    <span class="behavior-hookzone__hint">이 구간의 상태와 Effect 는 이 훅 안에 있습니다</span>
+    ${step.hookLine ? `<span class="behavior-step__line">L${step.hookLine}</span>` : ''}
+  `
+  if (step.hookLine && onNavigate) {
+    head.classList.add('is-clickable')
+    head.title = `L${step.hookLine} — 훅 선언으로 이동`
+    head.addEventListener('click', () => onNavigate(step.hookLine))
+  }
+  box.appendChild(head)
+
+  return box
 }
 
 /** 스텝 사이 화살표 — Effect 로 넘어갈 때는 이유를 함께 보여줍니다 */
@@ -490,10 +543,15 @@ function renderStep(step, num, onNavigate) {
     ? `<span class="behavior-step__line">L${step.line}</span>`
     : ''
 
-  // 경계 스텝은 이유를 함께 보여줘야 "도구가 못 찾은 것"과 구분됩니다
-  const note = step.kind === 'boundary' && step.note
-    ? `<span class="behavior-step__hint">${esc(step.note)}</span>`
-    : ''
+  // 경계 스텝은 이유를 함께 보여줘야 "도구가 못 찾은 것"과 구분됩니다.
+  // 훅에서 이름을 바꿔 받았다면(`const [on, toggle] = useToggle()`) 훅 코드에서
+  // 찾아야 할 이름이 다르므로 그것도 적어 줍니다.
+  const hint = step.kind === 'boundary' && step.note
+    ? step.note
+    : step.hookInternal
+      ? `${step.hook} 안에서는 ${step.hookInternal}() 입니다`
+      : null
+  const note = hint ? `<span class="behavior-step__hint">${esc(hint)}</span>` : ''
 
   el.innerHTML = `
     <span class="behavior-step__num">${step.kind === 'boundary' ? '·' : num}</span>
@@ -536,10 +594,20 @@ function renderStateSummary(components, onNavigate) {
         : '상태'
       const target = s.state || 'Redux 스토어'
 
+      // 훅이 관리하는 상태인지, 그중에서도 컴포넌트가 아예 손댈 수 없는 것인지 —
+      // 이벤트가 없어 연쇄(훅 구역)를 못 그릴 때는 여기서만 알 수 있습니다.
+      const hookBadge = s.viaHook
+        ? `<span class="hl-badge hl-badge--inhook behavior-step__badge">🪝 ${esc(s.viaHook)}</span>`
+        : ''
+      const hookHint = s.internalOnly
+        ? `<span class="behavior-step__hint">${esc(s.viaHook)} 안에서만 바뀝니다 — 컴포넌트에서는 직접 부를 수 없습니다</span>`
+        : ''
+
       row.innerHTML = `
         <span class="behavior-step__body">
           <span class="behavior-step__kind">${kindLabel}</span>
-          <span class="behavior-step__label">${esc(target)}<span class="behavior-step__detail">← ${esc(s.setter || '?')}</span></span>
+          <span class="behavior-step__label">${esc(target)}<span class="behavior-step__detail">← ${esc(s.setter || '?')}</span>${hookBadge}</span>
+          ${hookHint}
         </span>
         <span class="behavior-step__line">L${s.line}</span>
       `
@@ -553,7 +621,9 @@ function renderStateSummary(components, onNavigate) {
       row.innerHTML = `
         <span class="behavior-step__body">
           <span class="behavior-step__kind">Effect</span>
-          <span class="behavior-step__label">${esc(e.when)}</span>
+          <span class="behavior-step__label">${esc(e.when)}${
+            e.viaHook ? `<span class="hl-badge hl-badge--inhook behavior-step__badge">🪝 ${esc(e.viaHook)}</span>` : ''
+          }</span>
         </span>
         <span class="behavior-step__line">L${e.line}</span>
       `

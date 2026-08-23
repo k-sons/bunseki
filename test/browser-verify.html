@@ -203,6 +203,91 @@ export default function Panel({ tab, id }) {
   log('관문 알약: ' + gatePills.length + '개 / 설명 붙은 것 ' +
     gatePills.filter(p => p.getAttribute('aria-label')).length + '개')
 
+  // 🪝 커스텀 훅 경계 — 흐름이 훅 안으로 들어갔다 나오는 구역이 그려지는지 봅니다
+  const hookCode = `import { useState, useEffect } from 'react'
+
+function useSearch() {
+  const [query, setQuery] = useState('')
+  const [hits, setHits] = useState([])
+  useEffect(() => {
+    search(query).then(setHits)
+  }, [query])
+  return { query, setQuery, hits }
+}
+
+function useToggle() {
+  const [on, setOn] = useState(false)
+  return [on, setOn]
+}
+
+export default function Panel() {
+  const { setQuery, hits } = useSearch()
+  const [open, toggle] = useToggle()
+  const [tab, setTab] = useState('a')
+  return (
+    <div>
+      <input onChange={(e) => setQuery(e.target.value)} />
+      <button onClick={() => toggle(true)}>t</button>
+      <button onClick={() => setTab('b')}>b</button>
+    </div>
+  )
+}
+`
+  const be6 = renderBehaviorView(parseBehavior(hookCode), () => {})
+  document.body.appendChild(be6)
+  const hookChips = [...be6.querySelectorAll('.behavior-chip')]
+  log('hook events: ' + hookChips.length)
+  hookChips.forEach((chip, i) => {
+    chip.click()
+    const zones = [...be6.querySelectorAll('.behavior-detail .behavior-hookzone')]
+    const head = zones.map(z =>
+      (z.querySelector('.behavior-hookzone__head')?.textContent || '').replace(/\s+/g, ' ').trim())
+    const inside = zones.map(z =>
+      [...z.querySelectorAll('.behavior-step, .behavior-wait')].map(s => {
+        const label = (s.querySelector('.behavior-step__label') || s).textContent.replace(/\s+/g, ' ').trim()
+        // 이름을 바꿔 받았으면 훅 안에서 찾을 이름을 함께 적어 줍니다
+        const hint = s.querySelector('.behavior-step__hint')
+        return label + (hint ? ` (${hint.textContent.replace(/\s+/g, ' ').trim()})` : '')
+      }).join(' → '))
+    // 구역 밖(컴포넌트)에 남은 스텝 — 이벤트로 시작해 리렌더로 끝나야 합니다
+    const outside = [...be6.querySelectorAll('.behavior-detail .behavior-flow > .behavior-step')]
+      .map(s => (s.querySelector('.behavior-step__label')?.textContent || '').replace(/\s+/g, ' ').trim())
+    log(`  hook event ${i + 1}: 구역 ${zones.length}개`)
+    head.forEach((h, k) => log(`      [${h}]  ${inside[k]}`))
+    log('      구역 밖: ' + outside.join(' → '))
+  })
+  // 마지막 칩에는 구역이 없으므로, 구역이 있는 첫 칩으로 돌아와 세야 합니다
+  hookChips[0].click()
+  const zoneHeads = [...be6.querySelectorAll('.behavior-detail .behavior-hookzone__head')]
+  log('훅 구역 머리말: ' + zoneHeads.length + '개 / 훅 선언으로 이동 가능한 것 ' +
+    zoneHeads.filter(h => h.classList.contains('is-clickable')).length + '개')
+
+  // 🔗 관계 카드가 "이 Effect 는 훅 안에 있다" 를 함께 보여주는지
+  const hookLoopCode = `import { useState, useEffect } from 'react'
+
+function useCounter() {
+  const [count, setCount] = useState(0)
+  useEffect(() => {
+    setCount(count + 1)
+  }, [count])
+  return count
+}
+
+export default function Panel() {
+  const count = useCounter()
+  return <div>{count}</div>
+}
+`
+  const be7 = renderBehaviorView(parseBehavior(hookLoopCode), () => {})
+  document.body.appendChild(be7)
+  const loopCard = be7.querySelector('.interplay-card')
+  log('훅 안의 루프 카드: ' + (loopCard
+    ? [...loopCard.querySelectorAll('.timing-pill')]
+        .map(p => p.textContent.replace(/\s+/g, ' ').trim()).join('  ·  ')
+    : '(없음)'))
+  log('  ⏱ 트랙 머리말: ' + [...be7.querySelectorAll('.timing-track__head')]
+    .map(h => h.textContent.replace(/\s+/g, ' ').trim()).join(' | '))
+
   // 붙여넣은 코드가 HTML 로 해석되지 않는지 — `<button onClick>` 라벨이 진짜
   // 엘리먼트로 렌더되면 스텝이 깨집니다. 라벨 안에는 span 말고 아무것도 없어야 합니다.
   const labels = [...document.querySelectorAll('.behavior-step__label')]

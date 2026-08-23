@@ -1400,6 +1400,56 @@ body {
   color: var(--text-tertiary);
 }
 
+/* --- 커스텀 훅 구역 --- */
+/* 상태·Effect 가 커스텀 훅 안에 있는 구간을 상자로 묶습니다.
+   흐름이 훅 안으로 들어갔다가 리렌더에서 컴포넌트로 나오는 모습이 보이도록.
+   색은 175 — 이 탭의 스텝 색(이벤트 200 · setter 280 · Effect 45 · 호출 160 ·
+   경계 30)과 겹치지 않게 골랐습니다. 상자는 스텝이 아니므로 점선 테두리입니다. */
+.behavior-hookzone {
+  display: flex;
+  flex-direction: column;
+  margin: 2px 0;
+  padding: 9px 10px 10px;
+  border: 1px dashed hsla(175, 65%, 45%, 0.4);
+  border-left: 3px solid hsl(175, 65%, 45%);
+  border-radius: var(--radius-sm);
+  background: hsla(175, 65%, 45%, 0.05);
+}
+
+.behavior-hookzone__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+
+.behavior-hookzone__head.is-clickable {
+  cursor: pointer;
+}
+
+.behavior-hookzone__head.is-clickable:hover .behavior-hookzone__name {
+  text-decoration: underline;
+}
+
+.behavior-hookzone__name {
+  font-family: var(--font-mono);
+  font-size: 0.73rem;
+  font-weight: 600;
+  color: hsl(175, 65%, 45%);
+}
+
+.behavior-hookzone__hint {
+  font-size: 0.66rem;
+  color: var(--text-tertiary);
+}
+
+/* 훅 안에 있다는 배지 — ⏱ 타이밍 트랙 머리말과 상태 요약에서 씁니다 */
+.hl-badge--inhook {
+  background: hsla(175, 65%, 45%, 0.15);
+  color: hsl(175, 65%, 45%);
+}
+
 /* --- ⏱ 비동기 타이밍 --- */
 .behavior-timing {
   margin-top: 22px;
@@ -1599,6 +1649,12 @@ body {
 .timing-pill__guard {
   font-size: 0.58rem;
   opacity: 0.85;
+}
+
+/* 🔗 관계 알약 — 이 Effect 가 사는 커스텀 훅 (연쇄의 훅 구역과 같은 색) */
+.timing-pill__hook {
+  font-size: 0.58rem;
+  color: hsl(175, 65%, 45%);
 }
 
 .timing-warn {

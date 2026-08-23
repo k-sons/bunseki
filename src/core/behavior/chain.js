@@ -8,6 +8,10 @@
  * 비동기 Effect 는 응답 전/후로 갈라 그 사이에 `kind:'wait'` 스텝을 끼웁니다 —
  * ⏱ 타임라인과 같은 눈금(weight)이라, 두 섹션의 "기다리는 시간" 표현이 맞습니다.
  *
+ * 스텝마다 `hook` 을 달아 둡니다 — 그 상태·Effect 가 컴포넌트가 아니라
+ * 커스텀 훅 안에 있다는 뜻입니다. UI 는 이어지는 같은 훅 스텝을 한 구역으로 묶어
+ * "흐름이 훅 안으로 들어갔다 나오는" 모습을 보여 줍니다.
+ *
  * UI 가 단순해지도록 여기서 **평탄화된 Step 배열**까지 만들어 넘깁니다.
  * 렌더러는 배열을 순서대로 그리기만 하면 됩니다.
  */
@@ -31,12 +35,15 @@ export function buildEvents(compName, collected, scope = {}) {
   const setterNames = states.map(s => s.setter).filter(Boolean)
   const setterToState = {}
   const setterKind = {}
-  const setterVia = {}
+  // setter → 이 상태를 관리하는 커스텀 훅 (컴포넌트 자신의 상태면 null)
+  const setterHook = {}
   for (const s of states) {
     if (!s.setter) continue
     setterToState[s.setter] = s.state
     setterKind[s.setter] = s.kind || 'state'
-    setterVia[s.setter] = s.viaHook || null
+    setterHook[s.setter] = s.viaHook
+      ? { name: s.viaHook, line: s.hookLine || null, internal: s.hookInternal || null }
+      : null
   }
 
   return handlers.map(handler => {
@@ -45,7 +52,7 @@ export function buildEvents(compName, collected, scope = {}) {
     const flows = setters.map(setter =>
       buildFlow({
         handler, setter, viaFns,
-        setterToState, setterKind, setterVia,
+        setterToState, setterKind, setterHook,
         effects, setterNames,
       })
     )
@@ -91,13 +98,14 @@ function detectBoundary(handler, localFns, setterNames, propNames, outOfScope) {
     if (outOfScope.has(name)) {
       return {
         steps: [
-          { kind: 'event', label: `<${handler.element} ${handler.event}>`, line: handler.line, badges: [] },
+          { kind: 'event', label: `<${handler.element} ${handler.event}>`, line: handler.line, hook: null, badges: [] },
           {
             kind: 'boundary',
             label: `${name}`,
             detail: `${outOfScope.get(name)} 에서 받아옴`,
             note: '이 훅은 다른 파일에 있어 여기서부터는 따라갈 수 없습니다',
             line: null,
+            hook: null,
             badges: [],
           },
         ],
@@ -107,13 +115,14 @@ function detectBoundary(handler, localFns, setterNames, propNames, outOfScope) {
     if (propNames.has(name)) {
       return {
         steps: [
-          { kind: 'event', label: `<${handler.element} ${handler.event}>`, line: handler.line, badges: [] },
+          { kind: 'event', label: `<${handler.element} ${handler.event}>`, line: handler.line, hook: null, badges: [] },
           {
             kind: 'boundary',
             label: `${name}`,
             detail: 'prop 으로 전달받은 함수',
             note: '이 컴포넌트를 사용하는 쪽에 있습니다. 부모 코드도 함께 붙여넣으면 이어서 볼 수 있습니다',
             line: null,
+            hook: null,
             badges: [],
           },
         ],
@@ -170,13 +179,14 @@ function resolveHandlerSetters(handler, localFns, setterNames) {
 /**
  * setter 하나에서 시작하는 흐름을 Step 배열로 평탄화합니다.
  */
-function buildFlow({ handler, setter, viaFns, setterToState, setterKind, setterVia, effects, setterNames }) {
+function buildFlow({ handler, setter, viaFns, setterToState, setterKind, setterHook, effects, setterNames }) {
   const steps = []
 
   steps.push({
     kind: 'event',
     label: `<${handler.element} ${handler.event}>`,
     line: handler.line,
+    hook: null,
     badges: [],
   })
 
@@ -186,17 +196,17 @@ function buildFlow({ handler, setter, viaFns, setterToState, setterKind, setterV
       kind: 'call',
       label: `${fn.name}()`,
       line: fn.line,
+      hook: null,
       badges: [],
     })
   })
 
   const state = setterToState[setter]
   const kind = setterKind ? setterKind[setter] : 'state'
-  const viaHook = setterVia ? setterVia[setter] : null
+  const via = setterHook ? setterHook[setter] : null
 
-  let note
-  if (viaHook) note = `${viaHook} 훅이 관리하는 상태입니다`
-  else if (kind === 'reducer') note = 'useReducer 로 관리되는 상태입니다'
+  // 훅이 관리하는 상태라는 사실은 아래 hook 필드(=UI 의 훅 구역)가 말해 줍니다.
+  const note = kind === 'reducer' ? 'useReducer 로 관리되는 상태입니다' : undefined
 
   steps.push({
     kind: 'setter',
@@ -204,7 +214,10 @@ function buildFlow({ handler, setter, viaFns, setterToState, setterKind, setterV
     detail: state ? `→  ${state}` : null,
     note,
     line: handler.line,
-    badges: viaHook ? [viaHook] : [],
+    hook: via ? via.name : null,
+    hookLine: via ? via.line : null,
+    hookInternal: via ? via.internal : null,
+    badges: [],
   })
 
   // 외부 스토어(Redux)는 바뀌는 대상이 이 컴포넌트 밖이라 Effect 연결을 따지지 않습니다
@@ -214,12 +227,16 @@ function buildFlow({ handler, setter, viaFns, setterToState, setterKind, setterV
       label: '리렌더',
       detail: '외부 스토어가 바뀌어, 구독 중인 컴포넌트들이 다시 그려집니다',
       line: null,
+      hook: null,
       badges: [],
     })
     return { steps }
   }
 
-  appendEffectSteps({ steps, state, effects, setterToState, setterNames, depth: 0, visited: new Set() })
+  appendEffectSteps({
+    steps, state, effects, setterToState, setterHook, setterNames,
+    depth: 0, visited: new Set(),
+  })
 
   return { steps }
 }
@@ -228,13 +245,14 @@ function buildFlow({ handler, setter, viaFns, setterToState, setterKind, setterV
  * 상태가 바뀐 뒤 이어지는 Effect 재실행을 스텝으로 붙입니다.
  * Effect 안에서 또 상태가 바뀌면 재귀로 따라갑니다 (연쇄).
  */
-function appendEffectSteps({ steps, state, effects, setterToState, setterNames, depth, visited }) {
+function appendEffectSteps({ steps, state, effects, setterToState, setterHook, setterNames, depth, visited }) {
   const triggered = effects.filter(
     e => e.trigger === 'deps' && e.deps.includes(state) && !visited.has(e.line)
   )
 
   if (triggered.length === 0 || depth > MAX_EFFECT_DEPTH) {
-    steps.push({ kind: 'rerender', label: '리렌더', line: null, badges: [] })
+    // 리렌더는 훅이 아니라 컴포넌트에서 일어납니다 — 여기서 훅 구역이 닫힙니다
+    steps.push({ kind: 'rerender', label: '리렌더', line: null, hook: null, badges: [] })
     if (triggered.length === 0 && depth === 0) {
       steps[steps.length - 1].detail = `'${state}' 를 deps 로 쓰는 Effect 는 없습니다`
     }
@@ -247,12 +265,17 @@ function appendEffectSteps({ steps, state, effects, setterToState, setterNames, 
     const async = findAsyncMarks(effect.body)
     const calls = findCalls(effect.body, setterNames)
     const innerSetters = findSetterUsage(effect.body, setterNames)
+    // 이 Effect 가 커스텀 훅 안에 있으면, 안에서 일어나는 일도 모두 훅 안입니다
+    const inHook = effect.viaHook || null
+    const inHookLine = effect.hookLine || null
 
     steps.push({
       kind: 'effect',
       label: `${effect.hook} 재실행`,
       note: `deps [${effect.deps.join(', ')}] 에 '${state}' 가 있어 다시 실행됩니다`,
       line: effect.line,
+      hook: inHook,
+      hookLine: inHookLine,
       badges: async,
     })
 
@@ -261,6 +284,8 @@ function appendEffectSteps({ steps, state, effects, setterToState, setterNames, 
         kind: 'call',
         label: `${fn.name}()`,
         line: fn.line,
+        hook: inHook,
+        hookLine: inHookLine,
         badges: async.length ? ['비동기'] : [],
       })
     }
@@ -286,17 +311,23 @@ function appendEffectSteps({ steps, state, effects, setterToState, setterNames, 
           weight: phase.wait.weight,
           waitMs: phase.wait.ms,
           line: null,
+          hook: inHook,
+          hookLine: inHookLine,
           badges: [],
         })
         waitShown = true
       }
 
       const nextState = setterToState[s]
+      const via = setterHook ? setterHook[s] : null
       steps.push({
         kind: 'setter',
         label: `${s}()`,
         detail: nextState ? `→  ${nextState}` : null,
         line: effect.line,
+        hook: via ? via.name : inHook,
+        hookLine: via ? via.line : inHookLine,
+        hookInternal: via ? via.internal : null,
         badges: [],
       })
 
@@ -306,14 +337,14 @@ function appendEffectSteps({ steps, state, effects, setterToState, setterNames, 
       )
       if (chained.length > 0) {
         appendEffectSteps({
-          steps, state: nextState, effects, setterToState, setterNames,
+          steps, state: nextState, effects, setterToState, setterHook, setterNames,
           depth: depth + 1, visited,
         })
         return
       }
     }
 
-    steps.push({ kind: 'rerender', label: '리렌더', line: null, badges: [] })
+    steps.push({ kind: 'rerender', label: '리렌더', line: null, hook: null, badges: [] })
   }
 }
 
@@ -327,7 +358,14 @@ export function describeEffects(effects) {
     else if (e.trigger === 'mount') when = '마운트 시 1회만 실행'
     else when = `deps [${e.deps.join(', ')}] 이 바뀔 때 실행`
 
-    return { line: e.line, hook: e.hook, trigger: e.trigger, deps: e.deps, when }
+    return {
+      line: e.line,
+      hook: e.hook,
+      trigger: e.trigger,
+      deps: e.deps,
+      when,
+      viaHook: e.viaHook || null,   // 이 Effect 가 사는 커스텀 훅
+    }
   })
 }
 

@@ -246,7 +246,7 @@ function everyRenderFindings(nodes) {
       note: `deps 배열이 없으면 렌더할 때마다 다시 실행됩니다. 그런데 이 Effect 는 ${states} 를 바꾸므로 다시 렌더되고, 그래서 또 실행됩니다.${loopGuardNote(guarded)}`,
       lines: [node.line],
       steps: [
-        { kind: 'effect', label: node.hook, detail: 'deps 배열 없음', line: node.line },
+        { kind: 'effect', label: node.hook, detail: 'deps 배열 없음', line: node.line, hook: node.viaHook },
         ...direct.map(setterStep),
         { kind: 'loopback', label: `↺ 다시 L${node.line}`, line: node.line },
       ],
@@ -361,6 +361,9 @@ function effectStep(node, viaState) {
     label: viaState ? `${node.hook} 재실행` : node.hook,
     detail: viaState ? `deps [${viaState}]` : `L${node.line}`,
     line: node.line,
+    // 얽힌 Effect 가 컴포넌트가 아니라 커스텀 훅 안에 있으면
+    // 그 훅 코드를 열어야 고칠 수 있으니, 어디 것인지 함께 답니다.
+    hook: node.viaHook,
   }
 }
 

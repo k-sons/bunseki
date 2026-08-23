@@ -208,6 +208,10 @@ export function resolveHookCalls(componentNode, analyzedHooks, skipNodes) {
         kind: src.kind,
         line: src.line,         // 선언 위치는 훅 안
         viaHook: hookName,
+        hookLine: analyzed.startLine,
+        // 이름을 바꿔 받았으면(`const [on, toggle] = useToggle()`) 훅 안에서 부르는
+        // 이름이 다릅니다. 훅 코드를 읽을 때 어느 이름을 찾아야 하는지 알려 줍니다.
+        hookInternal: internal !== local ? internal : null,
       })
     }
 
@@ -215,7 +219,9 @@ export function resolveHookCalls(componentNode, analyzedHooks, skipNodes) {
       mergedHooks.add(hookName)
 
       // 훅의 Effect 는 훅 내부 상태 이름을 deps 로 쓰므로 그대로 가져옵니다
-      effects.push(...analyzed.effects.map(e => ({ ...e, viaHook: hookName })))
+      effects.push(...analyzed.effects.map(
+        e => ({ ...e, viaHook: hookName, hookLine: analyzed.startLine })
+      ))
 
       // 훅 안에서만 쓰는 상태도 함께 가져옵니다.
       // 컴포넌트에서 직접 부를 수는 없지만, 훅의 Effect 안에서 일어나는
@@ -223,7 +229,12 @@ export function resolveHookCalls(componentNode, analyzedHooks, skipNodes) {
       for (const s of analyzed.states) {
         if (!s.setter) continue
         if (states.some(x => x.setter === s.setter)) continue
-        states.push({ ...s, viaHook: hookName, internalOnly: true })
+        states.push({
+          ...s,
+          viaHook: hookName,
+          hookLine: analyzed.startLine,
+          internalOnly: true,
+        })
       }
     }
   }, skipNodes ? (node) => node !== componentNode && skipNodes.has(node) : undefined)
