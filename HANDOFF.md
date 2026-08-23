@@ -7,14 +7,16 @@
 
 ## 0. 새 세션이면 여기부터 (3분)
 
-1. `git log --oneline -5` — 마지막 커밋이 `e20abb0` 인지 확인.
-2. `npm test` — **83 pass / 0 fail** 이면 출발점이 맞음.
+1. `git log --oneline -5` — 마지막 커밋이 `15da9d2` 인지 확인.
+2. `npm test` — **94 pass / 0 fail** 이면 출발점이 맞음.
 3. 이 문서 **3장(현재 상태)** 과 **6장(다음 할 일)** 만 보면 바로 이어서 작업 가능.
 4. 코드를 만지기 전, 손댈 파일이 4장 "계약" 3개 중 어디에 걸리는지 확인.
 
 지금 ⚡ 동작 탭은 **세 덩어리**입니다 — 위에서부터
 **이벤트 연쇄**(칩 고르면 세로 스텝) · **⏱ 타이밍 · deps 점검**(가로 타임라인) ·
 **🔗 Effect 사이 관계**(루프/경합/연쇄 카드).
+상태·Effect 가 커스텀 훅 안에 있으면 세 곳 모두 **🪝 훅 표시**가 붙습니다
+(연쇄는 스텝을 상자로 묶는 **훅 구역**, 나머지 둘은 배지).
 
 ---
 
@@ -157,13 +159,35 @@
 - **⏱ 섹션에 나오는 조건은 바뀌지 않음** — 관문만 있는 동기 effect 는 여전히 생략.
   관문은 문제가 아니라 흐름 설명이라, 그것 때문에 섹션을 늘리지 않았습니다.
 
+### (10) D) 커스텀 훅 경계 시각화 — 커밋 `15da9d2`
+- `viaHook` 배지는 있었지만 **훅 안팎의 상태 흐름이 한눈에 안 보였음**. 연쇄를 죽
+  늘어놓기만 하면 컴포넌트 상태와 훅이 관리하는 상태가 **같은 자리에 있는 것처럼** 보임.
+- `chain.js`: 스텝마다 **`hook`**(+`hookLine`) — "이 일이 일어나는 곳이 어느 훅 안인가".
+  훅이 관리하는 setter · 훅 안의 Effect · 그 Effect 안에서 일어나는 모든 것
+  (호출 · 응답 대기 · 응답 뒤 setter)이 **한 구역**. 이벤트 · 리렌더 · 컴포넌트 자신의
+  상태는 `null` 이라 **구역이 리렌더에서 닫힘**(흐름이 훅에서 나온다).
+  - 구역이 말해 주므로 setter 의 **훅 배지·"…훅이 관리하는 상태입니다" 문구는 뺐음**(중복).
+  - 여기서 `hook` 은 **코드가 적힌 자리가 아니라 상태·Effect 가 사는 자리**입니다.
+    `setQuery()` 는 컴포넌트에서 부르지만 그 상태는 훅 것이라 구역 안에 놓입니다.
+- `hooks.js`: 병합한 상태·Effect 에 **`hookLine`**(훅 선언 줄), 이름을 바꿔 받았으면
+  **`hookInternal`** — `const [on, toggle] = useToggle()` 이면 훅 안에서 찾을 이름은 `setOn`.
+- `interplay.js`: `effectStep` 에 `hook` — 얽힌 Effect 가 훅 안에 있으면 **고칠 파일이 그 훅**.
+- UI: 이어지는 같은 훅 스텝을 상자(`.behavior-hookzone`)로 묶고 머리말 클릭 =
+  훅 선언으로 이동. ⏱ 트랙 머리말 · 상태 요약 · 🔗 관계 알약에는 `🪝 훅이름` 배지.
+  훅 안에서만 바뀌는 상태(`internalOnly`)는 "컴포넌트에서는 직접 부를 수 없습니다" 라고 적음.
+  색은 **175**(청록) — 이 탭의 스텝 색(이벤트 200 · setter 280 · Effect 45 · 호출 160 ·
+  경계 30)과 겹치지 않게. 구역은 스텝이 아니므로 **점선 테두리**.
+- **다른 파일에서 import 한 훅은 그대로 경계(boundary)** — 안을 못 보는데 상자를 치면
+  "따라가 봤다" 는 거짓말이 됩니다.
+
 ---
 
 ## 3. 현재 상태 (스냅샷)
 
-- ✅ **작업트리 깨끗. 미커밋 없음.** `main` 최신 = `e20abb0` (A 트랙 + B + E + C 완료).
-- ✅ `npm test` → **83 pass / 0 fail**
-  (parser 10 · behavior 10 · examples 3 · timing 30 · stale-deps 11 · interplay 19)
+- ✅ **작업트리 깨끗. 미커밋 없음.** `main` 최신 = `15da9d2` (A 트랙 + B + E + C + D 완료).
+- ✅ `npm test` → **94 pass / 0 fail**
+  (parser 10 · behavior 10 · examples 3 · timing 30 · stale-deps 11 · interplay 19 ·
+  hook-boundary 11)
 - ✅ `npx vite build` 정상. 초기 번들 59KB, `@babel/parser` 는 `lib` 청크(≈300KB)로 **지연 로드**.
 - ✅ 브라우저 실제 렌더 확인(headless Chrome + `test/browser-verify.html`):
   `⏱ 타이밍 · deps 점검 / 위험 1 / deps 빠짐 2`, `⚠ [userId] 빠짐?` 칩,
@@ -174,6 +198,11 @@
   관문도 제자리에: `setLoading() → ↩ tab !== 'posts' 면 중단 → Promise 대기 → …`,
   `↩ !id 면 중단 → await 대기 → 응답 도착 → setPosts() 🛡 가드됨`(= await 뒤 `!alive` 는
   관문이 아니라 가드로 갔다는 확인).
+- ✅ 훅 경계도 실제 렌더 확인: 구역 안이
+  `setQuery()→query → useEffect 재실행 → search() → ⏳ 응답 대기 → setHits()`,
+  구역 밖이 `<input onChange> → 리렌더`. 이름을 바꿔 받은 것은
+  `toggle()→on (useToggle 안에서는 setOn() 입니다)`. 훅을 안 쓰는 흐름은 **구역 0개**.
+  🔗 카드도 `useEffect L5 🪝 useCounter · setCount()→count · ↺ 다시 L5`.
 - ✅ 노이즈 점검: useMemo/useCallback/AbortController/ref 가 섞인 대시보드 컴포넌트에서
   **오탐 0**(deps·interplay·gate 모두), ESLint `exhaustive-deps` 와 같은 지점만 지적.
 
@@ -192,14 +221,14 @@ src/
 │   └── behavior/               # ⚡ 동작 엔진 (AST)
 │       ├── index.js            # parseBehavior(code) → { components[], error }
 │       ├── collect.js          # 상태/effect/핸들러/컴포넌트 수집 (walk 등 공용 헬퍼)
-│       ├── chain.js            # 이벤트→setter→상태→Effect 연쇄(Step 배열) + 대기 스텝
-│       ├── hooks.js            # 같은 파일 커스텀 훅 추적 + 스코프 경계
+│       ├── chain.js            # 이벤트→setter→상태→Effect 연쇄(Step 배열) + 대기 · 훅 구역
+│       ├── hooks.js            # 같은 파일 커스텀 훅 추적 + 스코프 경계 + 안팎 이름 대응
 │       ├── timing.js           # ⏱ 비동기 타이밍 + 언마운트 위험 + 참조 수집 + 대기 무게 + 관문
 │       ├── deps.js             # ⚠ deps 에서 빠진 값 = stale closure
 │       └── interplay.js        # 🔗 Effect 사이 관계 = 루프/경합/연쇄
 ├── ui/
 │   ├── structure.js            # 🗺️
-│   └── behavior.js             # ⚡ + ⏱ 타이밍/deps UI + 🔗 관계 UI (renderInterplaySection)
+│   └── behavior.js             # ⚡ + 🪝 훅 구역 + ⏱ 타이밍/deps UI + 🔗 관계 UI
 └── data/examples.js            # 내장 예제 2개
 test/                           # node --test. *.test.mjs + browser-verify.html
 ```
@@ -210,6 +239,7 @@ test/                           # node --test. *.test.mjs + browser-verify.html
 
 ### ⚡ 동작 엔진의 effect 객체 (내부용)
 `collect.js` 가 만드는 raw effect: `{ hook, deps, depRoots, trigger, line, body, owner }`
+커스텀 훅에서 끌어온 effect 에는 `viaHook`(훅 이름) · `hookLine`(훅 선언 줄)이 더 붙는다.
 → `timing.js` 가 소비해(setter 마다 `deferred`/`guarded`/`nested`/`inIf`)
 `{ line, hook, trigger, deps, viaHook, isAsync, asyncKind,
 hasCleanup, hasGuard, risk, staleDeps, gates[], setters[], timeline[] }` 로 바꿔 UI 에 넘김.
@@ -230,13 +260,23 @@ UI 는 `trigger·risk·stale` 을 뺀 나머지를 순서대로 알약으로 그
 `wait` 만 `weight` 를 갖고, 세로 목록이라 **높이**로 그린다(`weight × 7px`).
 `wait` 는 스텝 번호를 먹지 않는다.
 
+**`hook`** — 이 상태·Effect 가 사는 커스텀 훅 이름(컴포넌트 것이면 `null`).
+⚠️ **이름이 겹친다** — raw effect 의 `hook` 은 `useEffect`/`useLayoutEffect` 같은 **훅 종류**고,
+스텝의 `hook` 은 **커스텀 훅 이름**이다(그쪽은 raw 에서 `viaHook`).
+UI 는 **이어지는 같은 `hook` 스텝을 상자 하나로 묶는다** — 그래서 엔진은 한 흐름 안에서
+훅 스텝이 **끊기지 않게** 내보내야 한다. `hookLine` 은 훅 선언 줄(머리말 클릭 = 이동),
+`hookInternal` 은 이름을 바꿔 받았을 때 **훅 안에서 부르는 이름**(같으면 `null`).
+`hook` 은 **코드가 적힌 자리가 아니라 상태·Effect 가 사는 자리**다 —
+`setQuery()` 는 컴포넌트에서 부르지만 그 상태는 훅 것이라 구역 안에 놓인다.
+
 ### 🔒 UI 이스케이프 규칙
 `ui/behavior.js` 에서 `innerHTML` 에 **코드에서 온 문자열**을 넣을 땐 반드시 `esc()`.
 안 그러면 `<button onClick>` 같은 라벨이 진짜 엘리먼트로 렌더된다.
 
 ### 🔗 interplay 항목 (UI 계약)
 `{ kind:'loop'|'contention'|'cascade', severity:'risk'|'warn'|'info', label, note,
-lines:number[], steps:[{kind:'effect'|'setter'|'loopback', label, detail, line, phase?, guarded?}] }`
+lines:number[], steps:[{kind:'effect'|'setter'|'loopback', label, detail, line, phase?, guarded?, hook?}] }`
+`effect` 알약의 `hook` 은 그 Effect 가 사는 커스텀 훅 — 고칠 파일이 그쪽이라는 뜻.
 UI 는 `steps` 를 순서대로 알약으로 그리기만 한다.
 
 ---
@@ -258,16 +298,20 @@ npx vite --port 5199 &
 
 ## 6. 다음 할 일
 
-A 트랙(1~4) · **B) 이벤트 연쇄 대기 구간** · **E) 다지기** · **C) 조건부 실행 표시** 까지
-완료·커밋됨. 다음 방향은 정해지지 않았으니 **사용자와 먼저 합의할 것.** 남은 후보:
+A 트랙(1~4) · **B) 이벤트 연쇄 대기 구간** · **E) 다지기** · **C) 조건부 실행 표시** ·
+**D) 커스텀 훅 경계 시각화** 까지 완료·커밋됨.
+다음 방향은 정해지지 않았으니 **사용자와 먼저 합의할 것.** 남은 후보:
 
-- **D) 커스텀 훅 경계 시각화** — `viaHook` 배지는 있지만 훅 안팎의 상태 흐름이 한눈에 안 보임.
 - **F) `.catch(setError)` 계열** — 지금은 `.then` 만 setter 로 셈. `.catch`/`.finally` 로
   넘긴 setter 는 놓침(의도된 false negative). 넓힐지는 판단 필요.
 - **C-2) 이벤트 연쇄에도 관문** — B 에서 대기 구간을 맞췄듯, 위쪽 이벤트 연쇄의
   `Effect 재실행` 스텝에도 관문을 끼워 두 섹션을 맞출 수 있음.
   (`findGates` 를 export 하면 `chain.js` 가 `describeWait` 처럼 가져다 쓰면 됨.
-  다만 연쇄에는 `code` 가 흐르지 않아 조건식 원문을 넘길 길을 하나 더 뚫어야 함.)
+  다만 연쇄에는 `code` 가 흐르지 않아 조건식 원문을 넘길 길을 하나 더 뚫어야 함.
+  관문 스텝에도 D 의 `hook` 을 달아야 훅 구역이 중간에 끊기지 않음.)
+- **D-2) 훅이 내보낸 핸들러** — 훅이 `{ onSelect }` 처럼 **콜백을 돌려주면** 지금은
+  이어지지 않음(`resolveHookCalls` 가 setter 만 대응시킴). 훅이 돌려준 콜백을 `onClick` 에
+  그대로 꽂는 형태는 흔해서 값어치가 있음.
 - **C-3) 관문의 사각지대** — `if (x) { setY(); return }` 처럼 **블록에 문장이 둘 이상**인
   이른 반환은 지금 관문으로 안 셈(`isEarlyReturnGuard` 가 문장 1개만 봄).
   넓히면 `guarded` 판정까지 함께 넓어지므로 위험 오탐을 먼저 확인할 것.
@@ -296,5 +340,7 @@ A 트랙(1~4) · **B) 이벤트 연쇄 대기 구간** · **E) 다지기** · **
   `test/timing.test.mjs` 의 "await 밖의 타이머는 대기 시간으로 세지 않는다" ·
   "else 가 붙으면 이른 반환이 아니라 갈림길이다" ·
   **"관문으로 잡으면 안 되는 것" 3개**(await 뒤 · 나중에 불릴 콜백 안 · else 붙은 if) +
+  `test/hook-boundary.test.mjs` 의 **"잡으면 안 되는 것" 2개**(import 한 훅은 구역이 아니라
+  경계 · 훅을 안 쓰는 컴포넌트에는 아무 스텝에도 훅이 안 붙음) +
   "deps 배열이 없는 Effect" 절의 안 잡는 케이스 4개를 먼저 확인.
 - 임시 검증 파일은 repo 밖(세션 scratchpad)에 만들 것. 작업트리는 깨끗하게 유지.
