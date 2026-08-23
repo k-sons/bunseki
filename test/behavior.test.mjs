@@ -371,3 +371,90 @@ export default function Panel() {
   const setList = steps.find(s => s.kind === 'setter' && s.label === 'setList()')
   assert.deepEqual(setList.badges, [])
 })
+
+
+/* ── 이벤트 핸들러 안의 비동기 ──────────────────────────────────────────────
+ *
+ * ⏱ 섹션은 Effect 만 봅니다. `onClick={async () => { … await … setX() }}` 도
+ * 똑같이 기다리는 구간이 있는데, 지금까지는 두 섹션 어디에도 나오지 않아
+ * **누르자마자 다 끝나는 것처럼** 보였습니다. Effect 와 같은 눈금으로 맞춥니다.
+ */
+
+const handlerFlows = (code) => {
+  const c = parseBehavior(code).components[0]
+  return c.events.map(ev => ev.flows.map(f => f.steps))
+}
+
+const SAVE = `import { useState } from 'react'
+export default function Save({ id }) {
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState(null)
+  const [done, setDone] = useState(false)
+
+  async function save() {
+    setSaving(true)
+    try {
+      await api.save(id)
+      setDone(true)
+    } catch (e) {
+      setErr(e)
+    }
+  }
+
+  return <div>
+    <button onClick={save}>저장</button>
+    <button onClick={() => setDone(false)}>초기화</button>
+  </div>
+}`
+
+test('응답 뒤에 바뀌는 상태 앞에는 기다리는 구간이 선다', () => {
+  const [saveEvent] = handlerFlows(SAVE)
+  const doneFlow = saveEvent.find(steps => steps.some(s => s.label === 'setDone()'))
+  const i = doneFlow.findIndex(s => s.kind === 'wait')
+  assert.ok(i > 0, '기다리는 구간이 있어야 한다')
+  assert.equal(doneFlow[i + 1].label, 'setDone()', '대기 바로 뒤가 응답 뒤 setter')
+  assert.ok(doneFlow[i].weight >= 2, 'Effect 와 같은 눈금(weight)을 쓴다')
+})
+
+test('응답 전에 바뀌는 상태 앞에는 기다리는 구간이 없다', () => {
+  const [saveEvent] = handlerFlows(SAVE)
+  const savingFlow = saveEvent.find(steps => steps.some(s => s.label === 'setSaving()'))
+  assert.equal(savingFlow.some(s => s.kind === 'wait'), false)
+})
+
+test('catch 에서만 바뀌는 상태에는 오류 표시가 붙는다', () => {
+  const [saveEvent] = handlerFlows(SAVE)
+  const errFlow = saveEvent.find(steps => steps.some(s => s.label === 'setErr()'))
+  const step = errFlow.find(s => s.label === 'setErr()')
+  assert.deepEqual(step.badges, ['오류 시'])
+})
+
+test('기다리지 않는 핸들러에는 대기 구간이 생기지 않는다', () => {
+  const [, resetEvent] = handlerFlows(SAVE)
+  assert.equal(resetEvent[0].some(s => s.kind === 'wait'), false)
+})
+
+test('인라인 화살표의 await 도 실제 기다리는 시간으로 잡는다', () => {
+  const [ev] = handlerFlows(`import { useState } from 'react'
+export default function A() {
+  const [done, setDone] = useState(false)
+  return <button onClick={async () => { await sleep(2000); setDone(true) }}>a</button>
+}`)
+  const wait = ev[0].find(s => s.kind === 'wait')
+  assert.equal(wait.waitMs, 2000)
+  assert.equal(wait.detail, '≈2초')
+})
+
+test('응답 전에도 불리는 이름은 응답 전으로 본다', () => {
+  // 연쇄는 이름 단위라, 앞뒤로 모두 불리는 setLoading 은 "응답 전" 이 사실입니다
+  const [ev] = handlerFlows(`import { useState } from 'react'
+export default function A({ id }) {
+  const [loading, setLoading] = useState(false)
+  return <button onClick={async () => {
+    setLoading(true)
+    await api.save(id)
+    setLoading(false)
+  }}>a</button>
+}`)
+  assert.equal(ev[0].some(s => s.kind === 'wait'), false)
+})

@@ -245,6 +245,41 @@ export default function Loader({ id }) {
     .map(s => (s.querySelector('.behavior-step__label') || s).textContent.replace(/\s+/g, ' ').trim())
   log('  연쇄: ' + errSteps.join('  →  '))
 
+  // ⚡ 이벤트 핸들러 안의 비동기 — 누르고 나서 기다리는 구간이 그려지는지 봅니다
+  const handlerCode = `import { useState } from 'react'
+
+export default function Save({ id }) {
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState(null)
+  const [done, setDone] = useState(false)
+  async function save() {
+    setSaving(true)
+    try {
+      await api.save(id, 3000)
+      setDone(true)
+    } catch (e) {
+      setErr(e)
+    }
+  }
+  return <button onClick={save}>{done ? 'ok' : 'save'}</button>
+}
+`
+  const beH = renderBehaviorView(parseBehavior(handlerCode), () => {})
+  document.body.appendChild(beH)
+  const hFlows = [...beH.querySelectorAll('.behavior-detail .behavior-flow')]
+  log('핸들러 흐름: ' + hFlows.length + '개')
+  hFlows.forEach((f, i) => {
+    const items = [...f.querySelectorAll('.behavior-step, .behavior-wait')].map(n => {
+      const label = (n.querySelector('.behavior-step__label') || n).textContent.replace(/\s+/g, ' ').trim()
+      const h = n.classList.contains('behavior-wait') ? ` [높이 ${Math.round(n.getBoundingClientRect().height)}px]` : ''
+      return label + h
+    })
+    log(`  흐름 ${i + 1}: ` + items.join('  →  '))
+  })
+  log('  대기 스텝: ' + beH.querySelectorAll('.behavior-detail .behavior-wait').length +
+    '개 / 오류 배지: ' + [...beH.querySelectorAll('.behavior-detail .behavior-step__badge')]
+      .map(n => n.textContent.trim()).join(', '))
+
   // 🪝 커스텀 훅 경계 — 흐름이 훅 안으로 들어갔다 나오는 구역이 그려지는지 봅니다
   const hookCode = `import { useState, useEffect } from 'react'
 

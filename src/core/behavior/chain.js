@@ -17,8 +17,8 @@
  * 렌더러는 배열을 순서대로 그리기만 하면 됩니다.
  */
 
-import { findSetterUsage, findCalls, findDirectCalls, findAsyncMarks, lineOf } from './collect.js'
-import { describeAsyncPhase, findGates, describeGate } from './timing.js'
+import { findSetterUsage, findCalls, findDirectCalls, findAsyncMarks, isFunctionNode, lineOf } from './collect.js'
+import { describeAsyncPhase, detectAsync, findGates, describeGate } from './timing.js'
 
 /** 핸들러에서 로컬 함수를 따라 들어가는 최대 깊이 */
 const MAX_FN_DEPTH = 3
@@ -48,11 +48,20 @@ export function buildEvents(compName, collected, scope = {}, code = null) {
   }
 
   return handlers.map(handler => {
-    const { setters, viaFns } = resolveHandlerSetters(handler, localFns, setterNames)
+    const { setters, viaFns, bodies } = resolveHandlerSetters(handler, localFns, setterNames)
+    const handlerAsync = describeHandlerAsync(bodies, setterNames)
 
-    const flows = setters.map(setter =>
+    // 응답 전에 바뀌는 상태를 먼저 — 눌렀을 때 곧바로 일어나는 일이 위에 오게.
+    const ordered = handlerAsync
+      ? [
+          ...setters.filter(s => !handlerAsync.deferred.has(s)),
+          ...setters.filter(s => handlerAsync.deferred.has(s)),
+        ]
+      : setters
+
+    const flows = ordered.map(setter =>
       buildFlow({
-        handler, setter, viaFns,
+        handler, setter, viaFns, handlerAsync,
         setterToState, setterKind, setterHook,
         effects, setterNames, code,
       })
@@ -146,7 +155,12 @@ function detectBoundary(handler, localFns, setterNames, propNames, outOfScope) {
 function resolveHandlerSetters(handler, localFns, setterNames) {
   const setters = new Set(findSetterUsage(handler.expr, setterNames))
   const viaFns = []
+  // 이 핸들러를 누르면 **실제로 실행되는 본문**들 — 인라인 화살표와 거쳐 가는 로컬 함수.
+  // 응답을 기다리는 자리가 어디인지는 이 본문들을 봐야 알 수 있습니다.
+  const bodies = []
   const seen = new Set()
+
+  if (isFunctionNode(handler.expr)) bodies.push(handler.expr)
 
   const follow = (fnName, depth) => {
     if (depth > MAX_FN_DEPTH || seen.has(fnName)) return
@@ -164,6 +178,7 @@ function resolveHandlerSetters(handler, localFns, setterNames) {
       hookLine: fn.hookLine || null,
       hookInternal: fn.hookInternal || null,
     })
+    bodies.push(fn.node)
     findSetterUsage(fn.node, setterNames).forEach(s => setters.add(s))
     // 메서드 호출(obj.foo())은 로컬 함수가 아니므로 따라가지 않습니다
     findDirectCalls(fn.node, setterNames).forEach(next => follow(next, depth + 1))
@@ -182,13 +197,53 @@ function resolveHandlerSetters(handler, localFns, setterNames) {
     findDirectCalls(handler.expr, setterNames).forEach(name => follow(name, 0))
   }
 
-  return { setters: [...setters], viaFns }
+  return { setters: [...setters], viaFns, bodies }
+}
+
+/**
+ * 핸들러가 **응답을 기다리는가** — 기다린다면 어느 setter 가 응답 뒤인가.
+ *
+ * ⏱ 섹션이 Effect 만 보고 있어, `onClick={async () => { … await … setX() }}` 의
+ * 기다리는 구간은 두 섹션 어디에도 나오지 않았습니다. Effect 와 묻는 것이 같으므로
+ * `timing.js` 의 판정을 그대로 씁니다.
+ *
+ * 본문이 여럿일 수 있어(인라인 화살표 + 거쳐 가는 로컬 함수) 결과를 합칩니다 —
+ * 한 곳이라도 기다리면 기다리는 것이고, 대기 무게는 **가장 오래 기다리는 쪽**입니다.
+ * 연쇄는 이름 단위라, **한 곳에서라도 응답 전에 불리는 이름**은 응답 전으로 봅니다.
+ */
+function describeHandlerAsync(bodies, setterNames) {
+  let asyncKind = null
+  let wait = null
+  const deferred = new Set()
+  const errorOnly = new Set()
+  const immediate = new Set()
+
+  for (const body of bodies) {
+    const found = detectAsync(body)
+    if (!found.isAsync) continue
+    if (!asyncKind) asyncKind = found.asyncKind
+
+    const phase = describeAsyncPhase(body, setterNames)
+    phase.deferred.forEach(n => deferred.add(n))
+    phase.errorOnly.forEach(n => errorOnly.add(n))
+    phase.immediate.forEach(n => immediate.add(n))
+    if (!wait || phase.wait.weight > wait.weight) wait = phase.wait
+  }
+
+  if (!asyncKind) return null
+
+  for (const name of immediate) {
+    deferred.delete(name)
+    errorOnly.delete(name)
+  }
+
+  return { asyncKind, deferred, errorOnly, wait }
 }
 
 /**
  * setter 하나에서 시작하는 흐름을 Step 배열로 평탄화합니다.
  */
-function buildFlow({ handler, setter, viaFns, setterToState, setterKind, setterHook, effects, setterNames, code }) {
+function buildFlow({ handler, setter, viaFns, handlerAsync, setterToState, setterKind, setterHook, effects, setterNames, code }) {
   const steps = []
 
   steps.push({
@@ -212,6 +267,22 @@ function buildFlow({ handler, setter, viaFns, setterToState, setterKind, setterH
     })
   })
 
+  // 핸들러가 응답을 기다린 뒤에 바꾸는 상태라면, 그 사이에 시간이 흐릅니다.
+  // Effect 와 같은 눈금(weight)을 쓰므로 두 곳의 대기 구간이 같은 크기로 보입니다.
+  const afterResponse = !!(handlerAsync && handlerAsync.deferred.has(setter))
+  if (afterResponse) {
+    steps.push({
+      kind: 'wait',
+      label: '응답 대기',
+      detail: handlerAsync.wait.detail,
+      weight: handlerAsync.wait.weight,
+      waitMs: handlerAsync.wait.ms,
+      line: null,
+      hook: null,
+      badges: [],
+    })
+  }
+
   const state = setterToState[setter]
   const kind = setterKind ? setterKind[setter] : 'state'
   const via = setterHook ? setterHook[setter] : null
@@ -228,7 +299,8 @@ function buildFlow({ handler, setter, viaFns, setterToState, setterKind, setterH
     hook: via ? via.name : null,
     hookLine: via ? via.line : null,
     hookInternal: via ? via.internal : null,
-    badges: [],
+    // 응답 뒤 자리 중에서도 **에러일 때만** 가는 길 — ⏱ 타임라인과 같은 표시
+    badges: afterResponse && handlerAsync.errorOnly.has(setter) ? ['오류 시'] : [],
   })
 
   // 외부 스토어(Redux)는 바뀌는 대상이 이 컴포넌트 밖이라 Effect 연결을 따지지 않습니다

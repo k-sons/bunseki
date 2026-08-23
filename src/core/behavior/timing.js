@@ -54,18 +54,7 @@ function analyzeOne(effect, setterNames, setterToState, storeSetters, code) {
   const body = effect.body
 
   // ── 비동기 여부 ──
-  let hasAwait = false, hasChain = false, hasFetch = false
-  walk(body, (n) => {
-    if (n.type === 'AwaitExpression') hasAwait = true
-    if (n.type === 'CallExpression') {
-      const name = calleeName(n)
-      if (PROMISE_METHODS.has(name)) hasChain = true
-      if (name === 'fetch') hasFetch = true
-    }
-  })
-  const isAsync = hasAwait || hasChain || hasFetch
-  // `.catch`/`.finally` 만 있어도 Promise 사슬이라 기다리는 구간은 똑같습니다.
-  const asyncKind = hasAwait ? 'await' : hasChain ? '.then' : hasFetch ? 'fetch' : null
+  const { isAsync, asyncKind } = detectAsync(body)
 
   // ── setter 들을 실행 시점(즉시 / 비동기 이후)과 가드 여부로 분류 ──
   //    같은 훑기로 effect 가 읽는 이름(refs)도 모읍니다 — deps 대조에 씁니다.
@@ -292,6 +281,31 @@ function analyzeBody(effectBody, setterNames) {
 
   visitFunctionBody(effectBody, false, false, false, false, false)
   return { setters: found, refs }
+}
+
+/**
+ * 이 본문이 **응답을 기다리는가**, 기다린다면 어떤 형태인가.
+ *
+ * Effect 든 이벤트 핸들러든 묻는 것은 같으므로 한 곳에 둡니다
+ * (`chain.js` 가 핸들러를 볼 때 같은 판정을 씁니다).
+ *
+ * @returns {{isAsync: boolean, asyncKind: 'await'|'.then'|'fetch'|null}}
+ */
+export function detectAsync(body) {
+  let hasAwait = false, hasChain = false, hasFetch = false
+  walk(body, (n) => {
+    if (n.type === 'AwaitExpression') hasAwait = true
+    if (n.type === 'CallExpression') {
+      const name = calleeName(n)
+      if (PROMISE_METHODS.has(name)) hasChain = true
+      if (name === 'fetch') hasFetch = true
+    }
+  })
+  return {
+    isAsync: hasAwait || hasChain || hasFetch,
+    // `.catch`/`.finally` 만 있어도 Promise 사슬이라 기다리는 구간은 똑같습니다.
+    asyncKind: hasAwait ? 'await' : hasChain ? '.then' : hasFetch ? 'fetch' : null,
+  }
 }
 
 /**
@@ -638,6 +652,8 @@ export function describeAsyncPhase(body, setterNames) {
   const { setters } = analyzeBody(body, setterNames)
   const immediate = new Set(setters.filter(s => !s.deferred).map(s => s.name))
   return {
+    // 응답 **전**에 한 번은 불리는 이름들. 본문이 여럿인 핸들러를 합칠 때 씁니다.
+    immediate,
     // 연쇄는 setter 를 **이름 단위**로 나열하므로, 같은 setter 가 응답 전후로 모두
     // 불릴 수 있습니다(setLoading(true) … .then(() => setLoading(false))).
     // 그럴 땐 "응답 전" 으로 봅니다 — 이벤트 직후 곧바로 한 번 바뀌는 것이 사실이니까.
