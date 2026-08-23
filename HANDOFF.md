@@ -1,14 +1,14 @@
 # 🔄 Code Bunseki — 작업 인계문 (Handoff)
 
-> 갱신: 2026-08-23 · 새 세션에서 이어서 작업하기 위한 인수인계 문서.
+> 갱신: 2026-08-24 · 새 세션에서 이어서 작업하기 위한 인수인계 문서.
 > **이 문서 하나만 읽으면 현재 상태와 다음 할 일을 파악할 수 있게** 정리합니다.
 
 ---
 
 ## 0. 새 세션이면 여기부터 (3분)
 
-1. `git log --oneline -5` — 마지막 커밋이 `15da9d2` 인지 확인.
-2. `npm test` — **94 pass / 0 fail** 이면 출발점이 맞음.
+1. `git log --oneline -5` — 마지막 커밋이 `d8f6a25` 인지 확인.
+2. `npm test` — **106 pass / 0 fail** 이면 출발점이 맞음.
 3. 이 문서 **3장(현재 상태)** 과 **6장(다음 할 일)** 만 보면 바로 이어서 작업 가능.
 4. 코드를 만지기 전, 손댈 파일이 4장 "계약" 3개 중 어디에 걸리는지 확인.
 
@@ -180,14 +180,46 @@
 - **다른 파일에서 import 한 훅은 그대로 경계(boundary)** — 안을 못 보는데 상자를 치면
   "따라가 봤다" 는 거짓말이 됩니다.
 
+### (11) D-2) 훅이 내보낸 핸들러 — 커밋 `ca36ca2`
+- 커스텀 훅은 상태만 돌려주지 않습니다. `const { onSelect } = useSelection()` 처럼
+  **콜백을 돌려주고 그걸 그대로 `onClick` 에 꽂는** 형태가 흔한데, `resolveHookCalls` 가
+  **setter 만** 대응시켜서 그 핸들러는 "상태를 바꾸지 않는 이벤트" 로 보였음.
+- `hooks.js`: `analyzeHook` 이 훅의 **`localFns`** 도 들고 나옵니다. 내보낸 이름이 setter 가
+  아니면 훅 안의 함수인지 보고, 맞으면 **`hookFns`** 로 내보냄.
+  `buildReturnMap` 은 `return { inc: () => setN(n+1) }` 처럼 **그 자리에서 만들어 돌려주는
+  콜백**도 노드째로 잡습니다(객체 `fns` · 배열 `fns` 양쪽).
+- `index.js`: `hookFns` 를 **컴포넌트가 부르는 이름**으로 `localFns` 에 합침.
+  이름이 겹치면 **컴포넌트 자신의 함수가 이김**.
+- `chain.js`: `viaFns` 가 `hook`/`hookLine`/`hookInternal` 을 함께 실어 나릅니다 →
+  **`call` 스텝에서 훅 구역이 열리고** 그 뒤 setter·Effect 까지 끊기지 않음.
+- **import 한 훅이 돌려준 콜백은 그대로 경계** — 안을 못 보는 건 변함없음.
+
+### (12) C-2) 이벤트 연쇄에도 관문 — 커밋 `d8f6a25`
+- ⏱ 타임라인에만 있던 관문(gate)을 위쪽 **이벤트 연쇄에도** 끼웁니다. B 에서 대기 구간을
+  맞췄듯, **두 섹션이 같은 말을 하게** 맞추는 작업.
+- `timing.js`: `findGates` 를 **export**, 문장을 만드는 **`describeGate(g)`(신규)** 를 두고
+  타임라인도 그것을 쓰게 함 → **라벨이 한 곳에서만 만들어짐**(두 섹션이 글자까지 같음).
+- `index.js`: `buildEvents(comp.name, merged, scope, **code**)` — 연쇄에는 원본 소스가
+  흐르지 않아 **조건식을 그대로 잘라 쓸 길을 하나 더 뚫음**(없으면 `조건` 으로 적힘).
+- `chain.js`: **Effect 재실행 스텝 바로 뒤에** 관문을 모아 놓습니다. 타임라인은 관문과 즉시
+  setter 를 **줄 번호로 세우지만**, 연쇄는 호출·setter 를 단계별로 늘어놓으므로 관문은
+  Effect 뒤에 모음 — 말하려는 건 **"아래 단계로 못 갈 수 있다"** 하나뿐이라 그걸로 충분함.
+  관문 스텝에도 **`hook`/`hookLine`** 을 답니다(훅 구역이 중간에 끊기면 안 되므로).
+- UI: **`↩` 표시로 번호를 먹지 않음**(번호가 안 건너뜀) + 끊긴 테두리(`.behavior-step--gate`).
+  설명은 **알약 안(hint)에만** 두고 화살표 `note` 는 건너뜁니다 — 안 그러면 같은 문장이
+  두 번 나옴.
+- **판정은 그대로** — `findGates` 규칙을 넓히지 않았으므로 관문으로 안 세는 것 3개
+  (await 뒤 · 나중에 불릴 콜백 안 · else 붙은 if)도 연쇄에서 똑같이 적용됨.
+
 ---
 
 ## 3. 현재 상태 (스냅샷)
 
-- ✅ **작업트리 깨끗. 미커밋 없음.** `main` 최신 = `15da9d2` (A 트랙 + B + E + C + D 완료).
-- ✅ `npm test` → **94 pass / 0 fail**
-  (parser 10 · behavior 10 · examples 3 · timing 30 · stale-deps 11 · interplay 19 ·
-  hook-boundary 11)
+- ✅ **작업트리 깨끗. 미커밋 없음.** `main` 최신 = `d8f6a25`
+  (A 트랙 + B + E + C + D + **D-2** + **C-2** 완료).
+- ✅ `npm test` → **106 pass / 0 fail**
+  (parser 10 · behavior 15 · examples 3 · timing 30 · stale-deps 11 · interplay 19 ·
+  hook-boundary 18)
 - ✅ `npx vite build` 정상. 초기 번들 59KB, `@babel/parser` 는 `lib` 청크(≈300KB)로 **지연 로드**.
 - ✅ 브라우저 실제 렌더 확인(headless Chrome + `test/browser-verify.html`):
   `⏱ 타이밍 · deps 점검 / 위험 1 / deps 빠짐 2`, `⚠ [userId] 빠짐?` 칩,
@@ -203,6 +235,10 @@
   구역 밖이 `<input onChange> → 리렌더`. 이름을 바꿔 받은 것은
   `toggle()→on (useToggle 안에서는 setOn() 입니다)`. 훅을 안 쓰는 흐름은 **구역 0개**.
   🔗 카드도 `useEffect L5 🪝 useCounter · setCount()→count · ↺ 다시 L5`.
+  훅이 돌려준 콜백도 구역 안: `pick() (useSelection 안에서는 onSelect() 입니다) → setSel()→sel`.
+- ✅ 연쇄의 관문도 실제 렌더 확인:
+  `setTab()→tab → useEffect 재실행 → ↩ tab !== 'posts' 면 중단 → fetchPosts() → ⏳ 응답 대기 → setPosts()`.
+  스텝 번호 `1 2 3 4 ↩ 5 6 7`(**안 건너뜀**), 화살표에 관문 설명 **중복 0건**.
 - ✅ 노이즈 점검: useMemo/useCallback/AbortController/ref 가 섞인 대시보드 컴포넌트에서
   **오탐 0**(deps·interplay·gate 모두), ESLint `exhaustive-deps` 와 같은 지점만 지적.
 
@@ -221,8 +257,8 @@ src/
 │   └── behavior/               # ⚡ 동작 엔진 (AST)
 │       ├── index.js            # parseBehavior(code) → { components[], error }
 │       ├── collect.js          # 상태/effect/핸들러/컴포넌트 수집 (walk 등 공용 헬퍼)
-│       ├── chain.js            # 이벤트→setter→상태→Effect 연쇄(Step 배열) + 대기 · 훅 구역
-│       ├── hooks.js            # 같은 파일 커스텀 훅 추적 + 스코프 경계 + 안팎 이름 대응
+│       ├── chain.js            # 이벤트→setter→상태→Effect 연쇄(Step 배열) + 대기 · 관문 · 훅 구역
+│       ├── hooks.js            # 같은 파일 커스텀 훅 추적 + 스코프 경계 + 안팎 이름 대응 + 돌려준 콜백
 │       ├── timing.js           # ⏱ 비동기 타이밍 + 언마운트 위험 + 참조 수집 + 대기 무게 + 관문
 │       ├── deps.js             # ⚠ deps 에서 빠진 값 = stale closure
 │       └── interplay.js        # 🔗 Effect 사이 관계 = 루프/경합/연쇄
@@ -256,9 +292,13 @@ UI 는 `trigger·risk·stale` 을 뺀 나머지를 순서대로 알약으로 그
 `phase:'sync'` setter 의 `conditional` 은 "조건문 가지 안" 이라는 뜻(`조건부` 꼬리표).
 
 ### 🔗 이벤트 연쇄 스텝 (UI 계약)
-`kind: 'event'|'call'|'setter'|'effect'|'wait'|'rerender'|'boundary'`
+`kind: 'event'|'call'|'setter'|'effect'|'gate'|'wait'|'rerender'|'boundary'`
 `wait` 만 `weight` 를 갖고, 세로 목록이라 **높이**로 그린다(`weight × 7px`).
-`wait` 는 스텝 번호를 먹지 않는다.
+**`wait` 와 `gate` 는 스텝 번호를 먹지 않는다**(`gate` 는 `↩`, `boundary` 는 `·`).
+`gate` 는 ⏱ 타임라인과 **같은 `describeGate()` 로 만든 같은 문장**이고, `note` 는
+**알약 안(hint)에만** 그린다 — 화살표 `note` 로도 그리면 같은 말이 두 번 나온다.
+연쇄의 `gate` 는 줄 번호로 세우지 않고 **Effect 스텝 바로 뒤에 모인다**.
+`buildEvents(name, collected, scope, code)` — **네 번째 인자는 원본 소스**(관문 조건식용).
 
 **`hook`** — 이 상태·Effect 가 사는 커스텀 훅 이름(컴포넌트 것이면 `null`).
 ⚠️ **이름이 겹친다** — raw effect 의 `hook` 은 `useEffect`/`useLayoutEffect` 같은 **훅 종류**고,
@@ -299,19 +339,12 @@ npx vite --port 5199 &
 ## 6. 다음 할 일
 
 A 트랙(1~4) · **B) 이벤트 연쇄 대기 구간** · **E) 다지기** · **C) 조건부 실행 표시** ·
-**D) 커스텀 훅 경계 시각화** 까지 완료·커밋됨.
+**D) 커스텀 훅 경계 시각화** · **D-2) 훅이 내보낸 핸들러** · **C-2) 이벤트 연쇄 관문**
+까지 완료·커밋됨.
 다음 방향은 정해지지 않았으니 **사용자와 먼저 합의할 것.** 남은 후보:
 
 - **F) `.catch(setError)` 계열** — 지금은 `.then` 만 setter 로 셈. `.catch`/`.finally` 로
   넘긴 setter 는 놓침(의도된 false negative). 넓힐지는 판단 필요.
-- **C-2) 이벤트 연쇄에도 관문** — B 에서 대기 구간을 맞췄듯, 위쪽 이벤트 연쇄의
-  `Effect 재실행` 스텝에도 관문을 끼워 두 섹션을 맞출 수 있음.
-  (`findGates` 를 export 하면 `chain.js` 가 `describeWait` 처럼 가져다 쓰면 됨.
-  다만 연쇄에는 `code` 가 흐르지 않아 조건식 원문을 넘길 길을 하나 더 뚫어야 함.
-  관문 스텝에도 D 의 `hook` 을 달아야 훅 구역이 중간에 끊기지 않음.)
-- **D-2) 훅이 내보낸 핸들러** — 훅이 `{ onSelect }` 처럼 **콜백을 돌려주면** 지금은
-  이어지지 않음(`resolveHookCalls` 가 setter 만 대응시킴). 훅이 돌려준 콜백을 `onClick` 에
-  그대로 꽂는 형태는 흔해서 값어치가 있음.
 - **C-3) 관문의 사각지대** — `if (x) { setY(); return }` 처럼 **블록에 문장이 둘 이상**인
   이른 반환은 지금 관문으로 안 셈(`isEarlyReturnGuard` 가 문장 1개만 봄).
   넓히면 `guarded` 판정까지 함께 넓어지므로 위험 오탐을 먼저 확인할 것.
@@ -340,6 +373,7 @@ A 트랙(1~4) · **B) 이벤트 연쇄 대기 구간** · **E) 다지기** · **
   `test/timing.test.mjs` 의 "await 밖의 타이머는 대기 시간으로 세지 않는다" ·
   "else 가 붙으면 이른 반환이 아니라 갈림길이다" ·
   **"관문으로 잡으면 안 되는 것" 3개**(await 뒤 · 나중에 불릴 콜백 안 · else 붙은 if) +
+  `test/behavior.test.mjs` 의 **"await 뒤의 이른 반환은 연쇄에서도 관문이 아니다"** +
   `test/hook-boundary.test.mjs` 의 **"잡으면 안 되는 것" 2개**(import 한 훅은 구역이 아니라
   경계 · 훅을 안 쓰는 컴포넌트에는 아무 스텝에도 훅이 안 붙음) +
   "deps 배열이 없는 Effect" 절의 안 잡는 케이스 4개를 먼저 확인.
