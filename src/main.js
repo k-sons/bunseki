@@ -4,7 +4,6 @@
  * 모든 모듈을 연결하고 앱 전체를 구동합니다.
  */
 
-import { parseCode } from './core/parser.js'
 import { renderHighlightView, scrollToLine } from './core/highlighter.js'
 import { calculateMetrics, renderMetricsView } from './core/metrics.js'
 import { renderFlowView } from './core/flow.js'
@@ -92,7 +91,9 @@ function updateQuickStatus() {
 }
 
 // ===== Analysis =====
-function analyze() {
+// 파서는 @babel/parser 를 쓰기 때문에 번들이 큽니다. 동작 분석과 마찬가지로
+// 첫 분석 때 동적 import 로 불러와 초기 로딩에서 제외합니다(둘이 같은 청크를 공유).
+async function analyze() {
   const code = codeInput.value.trim()
   if (!code) return
 
@@ -100,6 +101,7 @@ function analyze() {
 
   try {
     // Parse
+    const { parseCode } = await import('./core/parser.js')
     currentAnalysis = parseCode(code)
 
     // Update status bar
@@ -351,7 +353,7 @@ function generateMarkdown(analysis) {
     
     md += `- **${c.name}** (${c.lineCount} lines) ${badges.length ? `[${badges.join(', ')}]` : ''}\n`
     if (c.hooks && c.hooks.length > 0) {
-      md += `  - Hooks: \`${c.hooks.join(', ')}\`\n`
+      md += `  - Hooks: \`${c.hooks.map(h => h.name || h).join(', ')}\`\n`
     }
   })
   if (components.length === 0) md += `- None\n`

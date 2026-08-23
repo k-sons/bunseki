@@ -1,0 +1,75 @@
+<!doctype html>
+<!--
+  브라우저 실제 렌더 하네스 (참고용, npm test 에는 포함되지 않음)
+
+  5개 탭 렌더러를 진짜 브라우저에서 실행하고, 동작 탭의 이벤트 칩을 하나씩
+  클릭해 렌더된 연쇄를 콘솔에 찍습니다. DOM 을 실제로 만드는 코드까지 검증합니다.
+
+  실행:
+    npx vite &
+    "<Chrome 경로>" --headless --disable-gpu --virtual-time-budget=6000 \
+      --dump-dom "http://localhost:5173/test/browser-verify.html"
+  또는 그냥 브라우저에서 http://localhost:5173/test/browser-verify.html 를 열고
+  콘솔(F12)을 확인하세요.
+-->
+<html><head><meta charset="utf-8"><title>browser verify</title></head><body>
+<div id="out" style="font-family:monospace; white-space:pre-wrap; padding:16px"></div>
+<script type="module">
+import { parseCode } from '../src/core/parser.js'
+import { renderHighlightView } from '../src/core/highlighter.js'
+import { calculateMetrics, renderMetricsView } from '../src/core/metrics.js'
+import { renderFlowView } from '../src/core/flow.js'
+import { renderStructureView } from '../src/ui/structure.js'
+import { parseBehavior } from '../src/core/behavior/index.js'
+import { renderBehaviorView } from '../src/ui/behavior.js'
+
+const code = `import { useState, useEffect, useCallback, memo } from 'react'
+import { fetchPosts } from './api'
+
+export default function UserDashboard({ userId, onLogout }) {
+  const [tab, setTab] = useState('profile')
+  const [posts, setPosts] = useState([])
+  useEffect(() => {
+    if (tab !== 'posts') return
+    fetchPosts(userId).then(setPosts)
+  }, [tab, userId])
+  const handleSelect = useCallback((next) => { setTab(next) }, [])
+  return (
+    <nav>
+      <button onClick={onLogout}>logout</button>
+      <button onClick={() => handleSelect('posts')}>posts</button>
+      {tab === 'profile' && <Profile />}
+    </nav>
+  )
+}
+const Profile = memo(() => <section>profile</section>)
+`
+
+const out = document.getElementById('out')
+const log = (t) => { out.textContent += t + '\n' }
+
+try {
+  const analysis = parseCode(code)
+  // 5개 탭 렌더러 실제 실행 — throw 하면 catch 로
+  renderHighlightView(code, analysis, 'jsx')
+  renderStructureView(analysis, () => {})
+  renderMetricsView(calculateMetrics(analysis), () => {})
+  renderFlowView(analysis, () => {})
+  const be = renderBehaviorView(parseBehavior(code), () => {})
+  document.body.appendChild(be)
+
+  log('RESULT_OK: true')
+  const chips = [...be.querySelectorAll('.behavior-chip')]
+  log('behavior events: ' + chips.length)
+  chips.forEach((chip, i) => {
+    chip.click()
+    const steps = [...be.querySelectorAll('.behavior-detail .behavior-step')].map(s =>
+      (s.querySelector('.behavior-step__kind')?.textContent || '') + ':' +
+      (s.querySelector('.behavior-step__label')?.textContent || '').replace(/\s+/g, ' ').trim())
+    log(`  event ${i + 1}: ` + steps.join('  →  '))
+  })
+} catch (err) {
+  log('RESULT_OK: false\n' + err.stack)
+}
+document.title = 'VERIFY_DONE'
+</script></body></html>

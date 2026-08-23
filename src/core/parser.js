@@ -1,17 +1,28 @@
 /**
  * Code Parser — React / React Native 코드 분석 엔진
  *
- * 정규식 기반으로 JS/JSX/TSX 코드에서 구조 정보를 추출합니다.
+ * @babel/parser 로 만든 AST 에서 구조 정보를 추출합니다.
+ * (예전에는 줄 단위 정규식으로 훑었는데, 구조분해 props `{ }`·memo/forwardRef 래퍼·
+ *  타입스크립트 제네릭·여러 줄 시그니처에서 함수를 놓치거나 줄 수를 1 로 잘못 세었습니다.
+ *  동작 탭에서 이미 검증된 AST 방식으로 통일했습니다.)
+ *
+ * 추출하는 것:
  * - Import 문
- * - 함수/화살표 함수 선언
- * - React 컴포넌트 (대문자 시작 함수)
+ * - 함수/화살표 함수/래핑된 컴포넌트 선언
+ * - React 컴포넌트 (대문자 시작 최상위 선언 또는 JSX 를 담은 중첩 선언)
  * - 상수/변수 정의
  * - React Hook 호출
  * - RN 전용 패턴 (StyleSheet, Animated 등)
  * - JSX 컴포넌트 사용
  * - 주석 (한줄, 여러줄, JSDoc)
  * - Export 문
+ * - 함수/컴포넌트 사이의 호출·렌더 관계
+ *
+ * 출력 형태(ParseResult)는 예전 정규식 파서와 동일하게 유지합니다 —
+ * 하이라이트/구조맵/메트릭/플로우 렌더러가 그대로 소비할 수 있게.
  */
+
+import { parse } from '@babel/parser'
 
 /**
  * @typedef {Object} ParseResult
@@ -25,84 +36,20 @@
  * @property {SectionMap[]} sections
  * @property {RNPattern[]} rnPatterns
  * @property {ComponentRelation[]} relations
+ * @property {number} totalLines
  */
 
-/**
- * 함수 선언 파싱 (function 키워드 + 화살표 함수)
- */
-function parseFunctions(lines, code) {
-  const results = []
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    const trimmed = line.trim()
-
-    // function declaration: async function Name(...) or function Name(...)
-    let match = trimmed.match(/^(?:export\s+(?:default\s+)?)?(?:(async)\s+)?function\s+(\w+)\s*\(([^)]*)\)/)
-    if (match) {
-      const isAsync = !!match[1]
-      const name = match[2]
-      const params = match[3] ? match[3].split(',').map(p => p.trim()).filter(Boolean) : []
-      const endLine = findBlockEnd(lines, i)
-      const isComponent = /^[A-Z]/.test(name)
-
-      results.push({
-        name,
-        type: isComponent ? 'component' : 'function',
-        isAsync,
-        params,
-        startLine: i + 1,
-        endLine: endLine + 1,
-        lineCount: endLine - i + 1,
-        hooks: findHooksInRange(lines, i, endLine),
-        handlers: findHandlersInRange(lines, i, endLine),
-        asyncKeywords: findAsyncKeywordsInRange(lines, i, endLine),
-        isExported: trimmed.startsWith('export'),
-        isDefault: trimmed.includes('export default'),
-      })
-      continue
-    }
-
-    // Arrow function: const Name = async (...) => or const Name = (...) =>
-    match = trimmed.match(/^(?:export\s+(?:default\s+)?)?(const|let|var)\s+(\w+)\s*=\s*(?:(async)\s*)?(?:\(([^)]*)\)|(\w+))\s*=>/)
-    if (!match) {
-      match = trimmed.match(/^(?:export\s+(?:default\s+)?)?(const|let|var)\s+(\w+)\s*=\s*(?:(async)\s+)?function\s*\(([^)]*)\)/)
-    }
-    if (match) {
-      const isAsync = !!match[3]
-      const name = match[2]
-      const params = (match[4] || match[5] || '').split(',').map(p => p.trim()).filter(Boolean)
-      const endLine = findBlockEnd(lines, i)
-      const isComponent = /^[A-Z]/.test(name)
-
-      // Only check for async internally if not explicitly async, but let's record internal async keywords anyway
-      const asyncKeywords = findAsyncKeywordsInRange(lines, i, endLine)
-
-      results.push({
-        name,
-        type: isComponent ? 'component' : 'function',
-        isAsync: isAsync || asyncKeywords.length > 0, // Fallback if they use Promise/fetch heavily
-        params,
-        startLine: i + 1,
-        endLine: endLine + 1,
-        lineCount: endLine - i + 1,
-        hooks: findHooksInRange(lines, i, endLine),
-        handlers: findHandlersInRange(lines, i, endLine),
-        asyncKeywords,
-        isExported: trimmed.startsWith('export'),
-        isDefault: trimmed.includes('export default'),
-      })
-    }
-  }
-
-  return results
+const PARSE_OPTIONS = {
+  sourceType: 'module',
+  errorRecovery: true,
+  plugins: ['jsx', 'typescript', 'decorators-legacy', 'classProperties'],
 }
 
 const REACT_HOOKS = [
   'useState', 'useEffect', 'useRef', 'useCallback', 'useMemo',
   'useContext', 'useReducer', 'useLayoutEffect', 'useImperativeHandle',
   'useDebugValue', 'useDeferredValue', 'useTransition', 'useId',
-  'useSyncExternalStore', 'useInsertionEffect', 'memo', 'useDispatch', 'useSelector', 'useStore'
+  'useSyncExternalStore', 'useInsertionEffect', 'memo', 'useDispatch', 'useSelector', 'useStore',
 ]
 
 const RN_HOOKS = [
@@ -114,20 +61,11 @@ const RN_HOOKS = [
 
 const STORE_KEYWORDS = ['dispatch']
 
-const RN_COMPONENTS = [
-  'View', 'Text', 'TouchableOpacity', 'TouchableHighlight', 'Pressable',
-  'ScrollView', 'FlatList', 'SectionList', 'Image', 'ImageBackground',
-  'TextInput', 'Switch', 'ActivityIndicator', 'Modal', 'Alert',
-  'SafeAreaView', 'KeyboardAvoidingView', 'StatusBar', 'Platform',
-  'StyleSheet', 'Animated', 'Dimensions', 'PixelRatio',
-]
+const BUILTIN_HOOK_SET = new Set([...REACT_HOOKS, ...RN_HOOKS, ...STORE_KEYWORDS])
+const RN_HOOK_SET = new Set(RN_HOOKS)
 
-const EVENT_HANDLERS = [
-  'onClick', 'onChange', 'onSubmit', 'onPress', 'onLongPress',
-  'onChangeText', 'onFocus', 'onBlur', 'onScroll', 'onLayout',
-  'onKeyDown', 'onKeyUp', 'onMouseEnter', 'onMouseLeave',
-  'onTransitionEnd', 'onAnimationEnd', 'onEndReached',
-]
+/** memo(Comp)/forwardRef(fn)/useCallback(fn)/observer(fn) 처럼 함수를 감싸는 래퍼 */
+const FN_WRAPPERS = new Set(['memo', 'forwardRef', 'useCallback', 'observer'])
 
 /**
  * 코드 전체를 분석하여 구조 정보를 반환합니다.
@@ -136,17 +74,46 @@ const EVENT_HANDLERS = [
  */
 export function parseCode(code) {
   const lines = code.split('\n')
+  const totalLines = lines.length
 
-  const imports = parseImports(lines)
-  const functions = parseFunctions(lines, code)
-  const constants = parseConstants(lines)
-  const hooks = parseHooks(lines)
-  const jsxComponents = parseJSXComponents(code)
-  const comments = parseComments(lines, code)
-  const exports = parseExports(lines)
-  const rnPatterns = parseRNPatterns(lines)
-  const sections = buildSectionMap(lines, imports, functions, constants, exports, comments)
-  const relations = buildRelations(functions, code)
+  let ast
+  try {
+    ast = parse(code, PARSE_OPTIONS)
+  } catch {
+    // 심하게 깨진 코드 — 분석은 비워 두되 하이라이트가 코드 자체는 그릴 수 있게 합니다.
+    return emptyResult(totalLines)
+  }
+
+  const exportedNames = collectExportedNames(ast)
+
+  const functions = collectFunctions(ast, exportedNames)
+  const componentNodes = new Set(functions.filter(f => f.type === 'component').map(f => f._node))
+
+  // 각 함수의 hooks/handlers/async 를, 자기 안에 중첩된 다른 컴포넌트 영역은 빼고 채웁니다.
+  for (const fn of functions) {
+    const skip = (n) => n !== fn._node && componentNodes.has(n)
+    fn.hooks = collectHooksInScope(fn._node, skip)
+    fn.handlers = collectHandlersInScope(fn._node, skip)
+    const asyncKeywords = collectAsyncKeywords(fn._node, skip)
+    fn.asyncKeywords = asyncKeywords
+    fn.isAsync = fn._async || asyncKeywords.length > 0
+  }
+
+  const imports = collectImports(ast)
+  const constants = collectConstants(ast)
+  const hooks = collectHookCalls(ast)
+  const jsxComponents = collectJSXComponents(ast)
+  const comments = collectComments(ast)
+  const exports = collectExports(ast, lines)
+  const rnPatterns = collectRNPatterns(ast)
+  const relations = buildRelations(functions, componentNodes)
+  const sections = buildSectionMap(lines, imports, functions, constants, exports)
+
+  // 내부용 AST 참조는 결과에서 제거합니다.
+  for (const fn of functions) {
+    delete fn._node
+    delete fn._async
+  }
 
   return {
     imports,
@@ -159,335 +126,474 @@ export function parseCode(code) {
     rnPatterns,
     sections,
     relations,
-    totalLines: lines.length,
+    totalLines,
   }
 }
 
-/** Import 문 파싱 */
-function parseImports(lines) {
+function emptyResult(totalLines) {
+  return {
+    imports: [], functions: [], constants: [], hooks: [],
+    jsxComponents: [], comments: [], exports: [], rnPatterns: [],
+    sections: new Array(totalLines).fill(null),
+    relations: [], totalLines,
+  }
+}
+
+/* ===== AST 순회 ===== */
+
+/**
+ * AST 를 재귀로 훑습니다.
+ * @param {object} node
+ * @param {(n: object) => void} visit
+ * @param {(n: object) => boolean} [skip] - true 를 돌려주면 그 가지를 통째로 건너뜁니다.
+ */
+function walk(node, visit, skip) {
+  if (!node || typeof node !== 'object') return
+  if (Array.isArray(node)) {
+    for (const n of node) walk(n, visit, skip)
+    return
+  }
+  if (typeof node.type === 'string') {
+    if (skip && skip(node)) return
+    visit(node)
+  }
+  for (const key of Object.keys(node)) {
+    if (key === 'loc' || key === 'leadingComments' || key === 'trailingComments' || key === 'comments') continue
+    walk(node[key], visit, skip)
+  }
+}
+
+const lineOf = (n) => (n && n.loc ? n.loc.start.line : null)
+const endLineOf = (n) => (n && n.loc ? n.loc.end.line : null)
+
+const isFunctionNode = (n) =>
+  n && (n.type === 'ArrowFunctionExpression' ||
+        n.type === 'FunctionExpression' ||
+        n.type === 'FunctionDeclaration')
+
+/** 호출식의 대상 이름 (foo() → 'foo', a.b() → 'b') */
+function calleeName(node) {
+  if (!node || node.type !== 'CallExpression') return null
+  const c = node.callee
+  if (!c) return null
+  if (c.type === 'Identifier') return c.name
+  if (c.type === 'MemberExpression' && c.property && c.property.type === 'Identifier') {
+    return c.property.name
+  }
+  return null
+}
+
+/** memo/forwardRef/useCallback 래퍼를 벗겨 실제 함수 노드를 꺼냅니다 */
+function unwrapFunction(node, depth = 0) {
+  if (!node || depth > 3) return null
+  if (isFunctionNode(node)) return node
+  if (node.type === 'CallExpression') {
+    const name = calleeName(node)
+    if (FN_WRAPPERS.has(name) && node.arguments && node.arguments[0]) {
+      return unwrapFunction(node.arguments[0], depth + 1)
+    }
+  }
+  return null
+}
+
+/** 이 노드 안에 JSX 가 있는가 — 중첩 컴포넌트 판별에 씁니다 */
+function containsJSX(node) {
+  let found = false
+  walk(node, (n) => {
+    if (n.type === 'JSXElement' || n.type === 'JSXFragment') found = true
+  })
+  return found
+}
+
+/* ===== 함수 / 컴포넌트 ===== */
+
+/**
+ * 최상위 함수·컴포넌트 + 중첩 컴포넌트를 수집합니다.
+ * 중첩된 이름붙은 핸들러(소문자)는 컴포넌트 본문의 일부로 보고 목록에 넣지 않습니다 —
+ * 그래야 크기 막대나 God Component 판정이 중복 없이 정확합니다.
+ */
+function collectFunctions(ast, exportedNames) {
   const results = []
-  let inMultiLineImport = false
-  let current = null
+  const seen = new Set()
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    const trimmed = line.trim()
+  const add = (name, fnNode, declNode, { isDefault = false } = {}) => {
+    if (!name || !fnNode || seen.has(fnNode)) return
+    seen.add(fnNode)
+    const start = lineOf(declNode || fnNode)
+    const end = endLineOf(fnNode)
+    const isComponent = /^[A-Z]/.test(name)
+    results.push({
+      name,
+      type: isComponent ? 'component' : 'function',
+      _node: fnNode,
+      _async: !!fnNode.async,
+      isAsync: !!fnNode.async,
+      params: readParams(fnNode.params),
+      startLine: start,
+      endLine: end,
+      lineCount: (start != null && end != null) ? (end - start + 1) : 1,
+      hooks: [],
+      handlers: [],
+      asyncKeywords: [],
+      isExported: exportedNames.default === name || exportedNames.named.has(name) || isDefault,
+      isDefault: isDefault || exportedNames.default === name,
+    })
+  }
 
-    if (inMultiLineImport) {
-      if (trimmed.includes('from ') || trimmed.endsWith("'") || trimmed.endsWith('"')) {
-        current.endLine = i + 1
-        const fromMatch = line.match(/from\s+['"](.+?)['"]/)
-        if (fromMatch) current.module = fromMatch[1]
-        results.push(current)
-        inMultiLineImport = false
-        current = null
+  // 최상위 선언
+  for (const stmt of ast.program.body) {
+    let target = stmt
+    let isDefault = false
+    if (stmt.type === 'ExportDefaultDeclaration') { target = stmt.declaration; isDefault = true }
+    else if (stmt.type === 'ExportNamedDeclaration') { target = stmt.declaration }
+    if (!target) continue
+
+    if (target.type === 'FunctionDeclaration' && target.id) {
+      add(target.id.name, target, target, { isDefault })
+    } else if (target.type === 'VariableDeclaration') {
+      for (const d of target.declarations) {
+        if (!d.id || d.id.type !== 'Identifier') continue
+        const fn = unwrapFunction(d.init)
+        if (fn) add(d.id.name, fn, d, { isDefault })
       }
-      continue
+    } else if (isDefault) {
+      // export default memo(() => …) 처럼 이름 없는 기본 내보내기
+      const fn = unwrapFunction(target)
+      if (fn) add('default', fn, stmt, { isDefault: true })
     }
+  }
 
-    const importMatch = trimmed.match(/^import\s+/)
-    if (importMatch) {
-      const fromMatch = line.match(/from\s+['"](.+?)['"]/)
-      const singleImport = line.match(/import\s+['"](.+?)['"]/)
+  // 중첩 컴포넌트 (대문자 + JSX 포함) — 목록에 없던 것만
+  const topNodes = new Set(results.map(r => r._node))
+  for (const comp of [...results]) {
+    walk(comp._node, (n) => {
+      if (n === comp._node) return
+      let name = null, fnNode = null, declNode = null
+      if (n.type === 'FunctionDeclaration' && n.id) {
+        name = n.id.name; fnNode = n; declNode = n
+      } else if (n.type === 'VariableDeclarator' && n.id && n.id.type === 'Identifier') {
+        const unwrapped = unwrapFunction(n.init)
+        if (unwrapped) { name = n.id.name; fnNode = unwrapped; declNode = n }
+      }
+      if (!name || !/^[A-Z]/.test(name) || !fnNode) return
+      if (topNodes.has(fnNode) || seen.has(fnNode)) return
+      if (!containsJSX(fnNode)) return
+      add(name, fnNode, declNode)
+    })
+  }
 
-      if (fromMatch || singleImport) {
-        // Single-line import
-        const moduleName = fromMatch ? fromMatch[1] : singleImport[1]
-        const namedMatch = line.match(/\{([^}]+)\}/)
-        const defaultMatch = line.match(/import\s+(\w+)/)
+  return results
+}
 
-        const names = []
-        if (namedMatch) {
-          names.push(...namedMatch[1].split(',').map(s => s.trim()).filter(Boolean))
-        }
-        if (defaultMatch && defaultMatch[1] !== 'type') {
-          names.push(defaultMatch[1])
-        }
+/** 파라미터 노드를 사람이 읽는 문자열로 바꿉니다 */
+function readParams(params) {
+  if (!params || params.length === 0) return []
+  return params.map(paramToString).filter(Boolean)
+}
 
-        results.push({
-          startLine: i + 1,
-          endLine: i + 1,
-          module: moduleName,
-          names,
-          isReact: moduleName === 'react' || moduleName.startsWith('react-'),
-          isRN: moduleName === 'react-native' || moduleName.startsWith('react-native-'),
-          raw: trimmed,
-        })
-      } else {
-        // Multi-line import starts
-        inMultiLineImport = true
-        current = {
-          startLine: i + 1,
-          endLine: i + 1,
-          module: '',
-          names: [],
-          isReact: false,
-          isRN: false,
-          raw: trimmed,
-        }
-        const namedMatch = line.match(/\{([^}]*)/)
-        if (namedMatch) {
-          current.names.push(...namedMatch[1].split(',').map(s => s.trim()).filter(Boolean))
-        }
+function paramToString(p) {
+  if (!p) return ''
+  switch (p.type) {
+    case 'Identifier': return p.name
+    case 'RestElement': return '...' + paramToString(p.argument)
+    case 'AssignmentPattern': return paramToString(p.left)
+    case 'ObjectPattern': {
+      const keys = p.properties.map(prop => {
+        if (prop.type === 'RestElement') return '...' + paramToString(prop.argument)
+        return (prop.key && (prop.key.name || prop.key.value)) || ''
+      }).filter(Boolean)
+      return '{ ' + keys.join(', ') + ' }'
+    }
+    case 'ArrayPattern':
+      return '[ ' + p.elements.map(e => (e ? paramToString(e) : '')).join(', ') + ' ]'
+    default:
+      return p.name || ''
+  }
+}
+
+/* ===== Hook / 핸들러 / 비동기 (범위 내) ===== */
+
+function categorizeHook(name) {
+  if (['useState', 'useReducer'].includes(name)) return 'state'
+  if (['useEffect', 'useLayoutEffect', 'useInsertionEffect'].includes(name)) return 'effect'
+  if (['useMemo', 'useCallback', 'useDeferredValue', 'memo'].includes(name)) return 'memo'
+  if (['useSelector', 'useDispatch', 'useStore', 'dispatch', 'useContext'].includes(name)) return 'store'
+  return 'other'
+}
+
+const isHookName = (name) =>
+  !!name && (BUILTIN_HOOK_SET.has(name) || /^use[A-Z]/.test(name))
+
+/** 범위 안에서 호출된 Hook 을 {name, category} 로, 이름 기준 중복 제거해 반환 */
+function collectHooksInScope(root, skip) {
+  const seen = new Set()
+  const found = []
+  walk(root, (n) => {
+    if (n.type !== 'CallExpression') return
+    const name = calleeName(n)
+    if (!isHookName(name)) return
+    if (seen.has(name)) return
+    seen.add(name)
+    found.push({ name, category: categorizeHook(name) })
+  }, skip)
+  return found
+}
+
+/** 범위 안 JSX 의 onXxx 이벤트 속성 이름들 (중복 제거) */
+function collectHandlersInScope(root, skip) {
+  const found = new Set()
+  walk(root, (n) => {
+    if (n.type !== 'JSXAttribute') return
+    if (!n.name || n.name.type !== 'JSXIdentifier') return
+    if (/^on[A-Z]/.test(n.name.name)) found.add(n.name.name)
+  }, skip)
+  return [...found]
+}
+
+/** 범위 안 비동기 흔적 (await/Promise/fetch/.then) */
+function collectAsyncKeywords(root, skip) {
+  const found = new Set()
+  walk(root, (n) => {
+    if (n.type === 'AwaitExpression') found.add('await')
+    if (n.type === 'Identifier' && n.name === 'Promise') found.add('Promise')
+    if (n.type === 'CallExpression') {
+      const name = calleeName(n)
+      if (name === 'fetch') found.add('fetch')
+      if (name === 'then') found.add('.then')
+    }
+  }, skip)
+  return [...found]
+}
+
+/* ===== Import ===== */
+
+function collectImports(ast) {
+  const results = []
+  for (const stmt of ast.program.body) {
+    if (stmt.type !== 'ImportDeclaration') continue
+    const module = stmt.source.value
+    const names = []
+    for (const spec of stmt.specifiers) {
+      if (spec.type === 'ImportDefaultSpecifier') names.push(spec.local.name)
+      else if (spec.type === 'ImportNamespaceSpecifier') names.push('* as ' + spec.local.name)
+      else if (spec.type === 'ImportSpecifier') {
+        names.push((spec.imported && (spec.imported.name || spec.imported.value)) || spec.local.name)
       }
     }
+    results.push({
+      startLine: lineOf(stmt),
+      endLine: endLineOf(stmt),
+      module,
+      names,
+      isReact: module === 'react' || module.startsWith('react-'),
+      isRN: module === 'react-native' || module.startsWith('react-native-'),
+      raw: '',
+    })
   }
   return results
 }
 
+/* ===== 상수 ===== */
 
-/** 상수/변수 정의 파싱 (함수가 아닌 최상위 const/let/var) */
-function parseConstants(lines) {
+function collectConstants(ast) {
   const results = []
+  for (const stmt of ast.program.body) {
+    let target = stmt
+    if (stmt.type === 'ExportNamedDeclaration' && stmt.declaration) target = stmt.declaration
+    if (!target || target.type !== 'VariableDeclaration') continue
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    const trimmed = line.trim()
-
-    // Skip imports
-    if (trimmed.startsWith('import ')) continue
-
-    const match = trimmed.match(/^(?:export\s+)?(const|let|var)\s+(\w+)\s*=\s*(?!function|.*=>)/)
-    if (match) {
-      // Check indentation — only top-level (0 or minimal indent)
-      const indent = line.length - line.trimStart().length
-      if (indent > 2) continue
-
-      const endLine = findValueEnd(lines, i)
+    for (const d of target.declarations) {
+      if (!d.id || d.id.type !== 'Identifier') continue
+      if (unwrapFunction(d.init)) continue // 함수는 functions 로 감
+      const init = d.init
       results.push({
-        name: match[2],
-        kind: match[1],
-        startLine: i + 1,
-        endLine: endLine + 1,
-        isArray: trimmed.includes('['),
-        isObject: trimmed.includes('{'),
+        name: d.id.name,
+        kind: target.kind,
+        startLine: lineOf(d),
+        endLine: endLineOf(d),
+        isArray: !!init && init.type === 'ArrayExpression',
+        isObject: !!init && init.type === 'ObjectExpression',
       })
     }
   }
-
   return results
 }
 
-/** React Hook 호출 파싱 */
-function parseHooks(lines) {
+/* ===== Hook 호출 (전체 목록) ===== */
+
+function collectHookCalls(ast) {
   const results = []
-  const allHooks = [...REACT_HOOKS, ...RN_HOOKS, ...STORE_KEYWORDS]
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-
-    for (const hook of allHooks) {
-      if (line.includes(hook + '(') || line.includes(hook + '<')) {
-        const isRN = RN_HOOKS.includes(hook)
-        results.push({
-          name: hook,
-          line: i + 1,
-          isRN,
-          category: categorizeHook(hook),
-        })
-      }
-    }
-
-    // Custom hooks (use로 시작하는 함수 호출)
-    const customMatch = line.match(/\buse[A-Z]\w+\s*(?:<[^>]*>)?\s*\(/)
-    if (customMatch) {
-      const hookName = customMatch[0].replace(/\s*(?:<[^>]*>)?\s*\($/, '')
-      if (!allHooks.includes(hookName)) {
-        results.push({
-          name: hookName,
-          line: i + 1,
-          isRN: false,
-          category: 'other',
-        })
-      }
-    }
-  }
-
-  return results
+  const seen = new Set()
+  walk(ast.program, (n) => {
+    if (n.type !== 'CallExpression') return
+    const name = calleeName(n)
+    if (!isHookName(name)) return
+    const line = lineOf(n)
+    const key = name + ':' + line
+    if (seen.has(key)) return
+    seen.add(key)
+    results.push({
+      name,
+      line,
+      isRN: RN_HOOK_SET.has(name),
+      category: categorizeHook(name),
+    })
+  })
+  return results.sort((a, b) => a.line - b.line)
 }
 
-/** JSX 컴포넌트 사용 파싱 */
-function parseJSXComponents(code) {
-  const matches = new Set()
-  const regex = /<([A-Z]\w+)[\s/>]/g
-  let match
-  while ((match = regex.exec(code)) !== null) {
-    matches.add(match[1])
-  }
-  return [...matches]
+/* ===== JSX 컴포넌트 사용 ===== */
+
+function collectJSXComponents(ast) {
+  const set = new Set()
+  walk(ast.program, (n) => {
+    if (n.type !== 'JSXOpeningElement') return
+    const name = n.name
+    if (name && name.type === 'JSXIdentifier' && /^[A-Z]/.test(name.name)) {
+      set.add(name.name)
+    } else if (name && name.type === 'JSXMemberExpression') {
+      // motion.li 같은 것 — object 이름을 남깁니다
+      const obj = name.object
+      if (obj && obj.type === 'JSXIdentifier' && /^[A-Z]/.test(obj.name)) set.add(obj.name)
+    }
+  })
+  return [...set]
 }
 
-/** 주석 파싱 */
-function parseComments(lines, code) {
-  const results = []
-  let inBlock = false
-  let blockStart = 0
+/* ===== 주석 ===== */
 
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim()
-
-    if (inBlock) {
-      if (trimmed.includes('*/')) {
-        results.push({
-          type: 'block',
-          startLine: blockStart + 1,
-          endLine: i + 1,
-          text: lines.slice(blockStart, i + 1).join('\n'),
-          isJSDoc: lines[blockStart].trim().startsWith('/**'),
-        })
-        inBlock = false
-      }
-      continue
+function collectComments(ast) {
+  const comments = ast.comments || []
+  return comments.map(c => {
+    const isBlock = c.type === 'CommentBlock'
+    const text = isBlock ? '/*' + c.value + '*/' : '//' + c.value
+    return {
+      type: isBlock ? 'block' : 'line',
+      startLine: c.loc ? c.loc.start.line : null,
+      endLine: c.loc ? c.loc.end.line : null,
+      text,
+      isJSDoc: isBlock && c.value.startsWith('*'),
     }
+  })
+}
 
-    if (trimmed.startsWith('//')) {
-      results.push({
-        type: 'line',
-        startLine: i + 1,
-        endLine: i + 1,
-        text: trimmed,
-        isJSDoc: false,
-      })
-    } else if (trimmed.startsWith('/*') || trimmed.startsWith('/**')) {
-      if (trimmed.includes('*/')) {
-        results.push({
-          type: 'block',
-          startLine: i + 1,
-          endLine: i + 1,
-          text: trimmed,
-          isJSDoc: trimmed.startsWith('/**'),
-        })
-      } else {
-        inBlock = true
-        blockStart = i
+/* ===== Export ===== */
+
+function collectExportedNames(ast) {
+  const named = new Set()
+  let def = null
+  for (const stmt of ast.program.body) {
+    if (stmt.type === 'ExportDefaultDeclaration') {
+      const d = stmt.declaration
+      if (d && d.id && d.id.name) def = d.id.name
+      else if (d && d.type === 'Identifier') def = d.name
+      else def = def || '__default__'
+    } else if (stmt.type === 'ExportNamedDeclaration') {
+      if (stmt.declaration) {
+        if (stmt.declaration.type === 'FunctionDeclaration' && stmt.declaration.id) {
+          named.add(stmt.declaration.id.name)
+        } else if (stmt.declaration.type === 'VariableDeclaration') {
+          for (const d of stmt.declaration.declarations) {
+            if (d.id && d.id.type === 'Identifier') named.add(d.id.name)
+          }
+        }
+      }
+      for (const spec of stmt.specifiers || []) {
+        if (spec.local && spec.local.name) named.add(spec.local.name)
       }
     }
   }
-
-  return results
+  return { named, default: def }
 }
 
-/** Export 문 파싱 */
-function parseExports(lines) {
+function collectExports(ast, lines) {
   const results = []
+  for (const stmt of ast.program.body) {
+    if (stmt.type !== 'ExportDefaultDeclaration' &&
+        stmt.type !== 'ExportNamedDeclaration' &&
+        stmt.type !== 'ExportAllDeclaration') continue
 
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim()
-
-    if (trimmed.startsWith('export ')) {
-      const isDefault = trimmed.includes('export default')
-      const nameMatch = trimmed.match(/export\s+(?:default\s+)?(?:function|const|let|var|class)\s+(\w+)/)
-      results.push({
-        line: i + 1,
-        isDefault,
-        name: nameMatch ? nameMatch[1] : null,
-        raw: trimmed,
-      })
+    const line = lineOf(stmt)
+    const isDefault = stmt.type === 'ExportDefaultDeclaration'
+    let name = null
+    const decl = stmt.declaration
+    if (decl) {
+      if (decl.id && decl.id.name) name = decl.id.name
+      else if (decl.type === 'VariableDeclaration' && decl.declarations[0] && decl.declarations[0].id) {
+        name = decl.declarations[0].id.name
+      } else if (decl.type === 'Identifier') name = decl.name
     }
+    results.push({
+      line,
+      isDefault,
+      name,
+      raw: (line != null && lines[line - 1]) ? lines[line - 1].trim() : '',
+    })
   }
-
   return results
 }
 
-/** RN 전용 패턴 파싱 */
-function parseRNPatterns(lines) {
+/* ===== RN 패턴 ===== */
+
+function collectRNPatterns(ast) {
   const results = []
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-
-    if (line.includes('StyleSheet.create')) {
-      results.push({ type: 'StyleSheet', line: i + 1 })
+  walk(ast.program, (n) => {
+    if (n.type !== 'MemberExpression') return
+    const obj = n.object
+    const prop = n.property
+    if (!obj || obj.type !== 'Identifier' || !prop || prop.type !== 'Identifier') return
+    const line = lineOf(n)
+    if (obj.name === 'StyleSheet' && prop.name === 'create') {
+      results.push({ type: 'StyleSheet', line })
+    } else if (obj.name === 'Animated') {
+      results.push({ type: 'Animated', subtype: prop.name, line })
+    } else if (obj.name === 'Platform' && (prop.name === 'OS' || prop.name === 'select')) {
+      results.push({ type: 'Platform', line })
+    } else if (obj.name === 'Dimensions' && prop.name === 'get') {
+      results.push({ type: 'Dimensions', line })
     }
-    if (line.includes('Animated.')) {
-      const match = line.match(/Animated\.(\w+)/)
-      if (match) results.push({ type: 'Animated', subtype: match[1], line: i + 1 })
-    }
-    if (line.includes('Platform.OS') || line.includes('Platform.select')) {
-      results.push({ type: 'Platform', line: i + 1 })
-    }
-    if (line.includes('Dimensions.get')) {
-      results.push({ type: 'Dimensions', line: i + 1 })
-    }
-  }
-
+  })
   return results
 }
 
-/** 섹션 맵 빌드 — 각 라인에 섹션 레이블 할당 */
-export function buildSectionMap(lines, imports, functions, constants, exports, comments) {
-  const map = new Array(lines.length).fill(null)
+/* ===== 관계 (렌더 / 호출) ===== */
 
-  // Mark import lines
-  for (const imp of imports) {
-    for (let i = imp.startLine - 1; i < imp.endLine; i++) {
-      map[i] = 'import'
-    }
-  }
-
-  // Mark function/component lines
-  for (const fn of functions) {
-    const section = fn.type === 'component' ? 'component' : 'helper'
-    for (let i = fn.startLine - 1; i < fn.endLine; i++) {
-      if (!map[i]) map[i] = section
-    }
-  }
-
-  // Mark constant lines
-  for (const c of constants) {
-    for (let i = c.startLine - 1; i < c.endLine; i++) {
-      if (!map[i]) map[i] = 'const'
-    }
-  }
-
-  // Mark export lines
-  for (const exp of exports) {
-    if (!map[exp.line - 1]) map[exp.line - 1] = 'export'
-  }
-
-  return map
-}
-
-/** 컴포넌트 간 호출 관계 빌드 */
-function buildRelations(functions, code) {
+/**
+ * 컴포넌트가 JSX 로 그리는 다른 컴포넌트, 함수가 부르는 다른 함수를 잇습니다.
+ * 본문을 훑을 때 자기 안의 다른 컴포넌트 영역은 건너뛰어 관계가 새지 않게 합니다.
+ */
+function buildRelations(functions, componentNodes) {
   const relations = []
-  const fnNames = functions.map(f => f.name)
+  const byName = new Map(functions.map(f => [f.name, f]))
 
   for (const fn of functions) {
-    if (fn.type !== 'component' && fn.type !== 'function') continue
+    const skip = (n) => n !== fn._node && componentNodes.has(n)
 
-    const bodyLines = code.split('\n').slice(fn.startLine - 1, fn.endLine)
-    const body = bodyLines.join('\n')
+    const renderedComponents = new Set()
+    const calledFns = new Set()
 
-    for (const other of functions) {
-      if (other.name === fn.name) continue
-      
-      // Check if this component uses another component in JSX
-      if (fn.type === 'component' && other.type === 'component') {
-        const regex = new RegExp(`<${other.name}[\\s/>]`)
-        if (regex.test(body)) {
-          relations.push({
-            from: fn.name,
-            to: other.name,
-            type: 'renders',
-            isAsync: false
-          })
+    walk(fn._node, (n) => {
+      if (n.type === 'JSXOpeningElement' && n.name && n.name.type === 'JSXIdentifier') {
+        if (/^[A-Z]/.test(n.name.name)) renderedComponents.add(n.name.name)
+      }
+      if (n.type === 'CallExpression' && n.callee && n.callee.type === 'Identifier') {
+        calledFns.add(n.callee.name)
+      }
+    }, skip)
+
+    if (fn.type === 'component') {
+      for (const name of renderedComponents) {
+        const other = byName.get(name)
+        if (other && other !== fn && other.type === 'component') {
+          relations.push({ from: fn.name, to: name, type: 'renders', isAsync: false })
         }
       }
-      
-      // Check if it calls a function
-      const callRegex = new RegExp(`\\b${other.name}\\s*\\(`)
-      if (callRegex.test(body) && other.type !== 'component') {
-        // Is it an async call? (await or .then chain near the call)
-        const isAsyncCall = other.isAsync || 
-                            bodyLines.some(l => l.includes(`await ${other.name}`) || (l.includes(`${other.name}(`) && l.includes('.then')))
-        
-        relations.push({
-          from: fn.name,
-          to: other.name,
-          type: 'calls',
-          isAsync: isAsyncCall
-        })
+    }
+
+    for (const name of calledFns) {
+      const other = byName.get(name)
+      if (other && other !== fn && other.type !== 'component') {
+        relations.push({ from: fn.name, to: name, type: 'calls', isAsync: !!other.isAsync })
       }
     }
   }
@@ -495,106 +601,36 @@ function buildRelations(functions, code) {
   return relations
 }
 
-/* ===== Helpers ===== */
+/* ===== 섹션 맵 ===== */
 
-/** 블록({...}) 끝 라인 찾기 */
-function findBlockEnd(lines, startIdx) {
-  let depth = 0
-  let started = false
+/** 각 라인에 섹션 레이블(import/component/helper/const/export)을 할당합니다 */
+export function buildSectionMap(lines, imports, functions, constants, exports) {
+  const map = new Array(lines.length).fill(null)
 
-  for (let i = startIdx; i < lines.length; i++) {
-    const line = lines[i]
-    for (const ch of line) {
-      if (ch === '{') { depth++; started = true; }
-      if (ch === '}') { depth--; }
-      if (started && depth === 0) return i
+  for (const imp of imports) {
+    if (imp.startLine == null) continue
+    for (let i = imp.startLine - 1; i < imp.endLine && i < map.length; i++) map[i] = 'import'
+  }
+
+  for (const fn of functions) {
+    if (fn.startLine == null) continue
+    const section = fn.type === 'component' ? 'component' : 'helper'
+    for (let i = fn.startLine - 1; i < fn.endLine && i < map.length; i++) {
+      if (!map[i]) map[i] = section
     }
   }
 
-  return Math.min(startIdx + 1, lines.length - 1)
-}
-
-/** 값 정의 끝 라인 찾기 (배열/객체 포함) */
-function findValueEnd(lines, startIdx) {
-  const line = lines[startIdx]
-  const hasOpen = line.includes('[') || line.includes('{')
-
-  if (!hasOpen) return startIdx
-
-  let depth = 0
-  for (let i = startIdx; i < lines.length; i++) {
-    for (const ch of lines[i]) {
-      if (ch === '[' || ch === '{') depth++
-      if (ch === ']' || ch === '}') depth--
-      if (depth === 0 && i > startIdx) return i
+  for (const c of constants) {
+    if (c.startLine == null) continue
+    for (let i = c.startLine - 1; i < c.endLine && i < map.length; i++) {
+      if (!map[i]) map[i] = 'const'
     }
   }
 
-  return startIdx
-}
-
-/** 범위 내 Hook 사용 찾기 */
-function findHooksInRange(lines, start, end) {
-  const found = []
-  const allHooks = [...REACT_HOOKS, ...RN_HOOKS, ...STORE_KEYWORDS]
-
-  for (let i = start; i <= end && i < lines.length; i++) {
-    for (const hook of allHooks) {
-      if (lines[i].includes(hook + '(')) {
-        found.push({ name: hook, category: categorizeHook(hook) })
-      }
-    }
-    // Custom hooks
-    const customMatch = lines[i].match(/\b(use[A-Z]\w+)\s*\(/)
-    if (customMatch && !allHooks.includes(customMatch[1])) {
-      found.push({ name: customMatch[1], category: 'other' })
-    }
+  for (const exp of exports) {
+    if (exp.line == null) continue
+    if (!map[exp.line - 1]) map[exp.line - 1] = 'export'
   }
 
-  // Deduplicate by name
-  const unique = []
-  const seen = new Set()
-  for (const h of found) {
-    if (!seen.has(h.name)) {
-      seen.add(h.name)
-      unique.push(h)
-    }
-  }
-
-  return unique
-}
-
-/** 범위 내 이벤트 핸들러 찾기 */
-function findHandlersInRange(lines, start, end) {
-  const found = []
-  for (let i = start; i <= end && i < lines.length; i++) {
-    for (const handler of EVENT_HANDLERS) {
-      if (lines[i].includes(handler)) {
-        found.push(handler)
-      }
-    }
-  }
-  return [...new Set(found)]
-}
-
-/** 비동기 관련 키워드 찾기 */
-function findAsyncKeywordsInRange(lines, start, end) {
-  const found = []
-  for (let i = start; i <= end && i < lines.length; i++) {
-    const line = lines[i]
-    if (/\bawait\b/.test(line)) found.push('await')
-    if (/\bPromise\b/.test(line)) found.push('Promise')
-    if (/\bfetch\s*\(/.test(line)) found.push('fetch')
-    if (/\.then\s*\(/.test(line)) found.push('.then')
-  }
-  return [...new Set(found)]
-}
-
-/** Hook 카테고리 분류 */
-function categorizeHook(name) {
-  if (['useState', 'useReducer'].includes(name)) return 'state'
-  if (['useEffect', 'useLayoutEffect', 'useInsertionEffect'].includes(name)) return 'effect'
-  if (['useMemo', 'useCallback', 'useDeferredValue', 'memo'].includes(name)) return 'memo'
-  if (['useSelector', 'useDispatch', 'useStore', 'dispatch', 'useContext'].includes(name)) return 'store'
-  return 'other'
+  return map
 }
