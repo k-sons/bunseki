@@ -1408,6 +1408,15 @@ body {
   background: hsla(0, 80%, 55%, 0.14);
 }
 
+.behavior-timing__stalecount {
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 10px;
+  color: hsl(28, 90%, 62%);
+  background: hsla(28, 90%, 55%, 0.14);
+}
+
 .timing-track {
   padding: 10px 12px;
   margin-bottom: 10px;
@@ -1420,6 +1429,11 @@ body {
 .timing-track--risk {
   border-left-color: hsl(0, 80%, 58%);
   background: hsla(0, 80%, 55%, 0.04);
+}
+
+.timing-track--stale {
+  border-left-color: hsl(28, 90%, 55%);
+  background: hsla(28, 90%, 55%, 0.04);
 }
 
 .timing-track__head {
@@ -1451,6 +1465,15 @@ body {
   color: var(--text-tertiary);
   background: var(--bg-base, transparent);
   border: 1px solid var(--border-subtle);
+}
+
+.timing-track__stale {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: hsl(28, 90%, 66%);
+  background: hsla(28, 90%, 55%, 0.16);
 }
 
 .timing-track__line {
@@ -1540,6 +1563,15 @@ body {
   border-radius: var(--radius-sm);
   background: hsla(0, 80%, 55%, 0.08);
   border: 1px solid hsla(0, 80%, 55%, 0.2);
+}
+
+.timing-warn--stale {
+  background: hsla(28, 90%, 55%, 0.08);
+  border-color: hsla(28, 90%, 55%, 0.22);
+}
+
+.timing-warn--stale .timing-warn__label {
+  color: hsl(28, 90%, 66%);
 }
 
 .timing-warn__label {

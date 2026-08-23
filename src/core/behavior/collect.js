@@ -241,6 +241,16 @@ function collectStates(root, skip) {
   return states
 }
 
+/**
+ * 식으로 쓴 deps 의 뿌리 이름 — `props.id` → 'props', `a.b.c` → 'a'.
+ * deps 대조(stale closure 검사) 때 "이미 들어 있음" 으로 쳐주려고 남깁니다.
+ */
+function depRootName(node) {
+  let n = node
+  while (n && (n.type === 'MemberExpression' || n.type === 'OptionalMemberExpression')) n = n.object
+  return n && n.type === 'Identifier' ? n.name : null
+}
+
 /** useEffect 의 의존성 배열과 본문을 수집합니다 */
 function collectEffects(root, skip) {
   const effects = []
@@ -250,8 +260,10 @@ function collectEffects(root, skip) {
 
     const [fnArg, depsArg] = n.arguments
     let deps = null
+    let depRoots = []
     if (depsArg && depsArg.type === 'ArrayExpression') {
       deps = depsArg.elements.map(e => (e && e.type === 'Identifier' ? e.name : '<식>'))
+      depRoots = depsArg.elements.map(depRootName).filter(Boolean)
     }
 
     let trigger
@@ -259,7 +271,9 @@ function collectEffects(root, skip) {
     else if (deps.length === 0) trigger = 'mount'
     else trigger = 'deps'
 
-    effects.push({ hook: name, deps, trigger, line: lineOf(n), body: fnArg })
+    // owner = 이 effect 를 감싼 함수(컴포넌트 또는 커스텀 훅).
+    // deps 에서 빠진 값을 찾으려면 "바깥에 무엇이 선언돼 있는지" 를 알아야 합니다.
+    effects.push({ hook: name, deps, depRoots, trigger, line: lineOf(n), body: fnArg, owner: root })
   }, skip)
   return effects
 }

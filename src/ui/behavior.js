@@ -118,27 +118,37 @@ export function renderBehaviorView(result, onNavigate) {
 }
 
 /**
- * ⏱ 비동기 타이밍 — effect 가 언제 무엇을 하는지 가로 타임라인으로 보여주고,
- * 응답 전 언마운트되면 없는 컴포넌트에 setState 하는 위험을 경고합니다.
- * (동기/비동기 아닌 effect 는 흐름이 단순하므로 여기서는 생략합니다.)
+ * ⏱ 타이밍 — effect 가 언제 무엇을 하는지 가로 타임라인으로 보여주고,
+ * 두 가지 함정을 경고합니다.
+ *   - 응답 전 언마운트되면 없는 컴포넌트에 setState 하는 위험
+ *   - deps 에서 빠진 값 — effect 가 옛 값을 붙잡고 있음 (stale closure)
+ * 짚을 것이 없는 동기 effect 는 흐름이 단순하므로 여기서는 생략합니다.
  */
 function renderTimingSection(components, onNavigate) {
-  const withAsync = components
-    .map(c => ({ name: c.name, effects: (c.timing || []).filter(e => e.isAsync) }))
+  const notable = components
+    .map(c => ({
+      name: c.name,
+      effects: (c.timing || []).filter(e => e.isAsync || staleNames(e).length > 0),
+    }))
     .filter(c => c.effects.length > 0)
 
-  if (withAsync.length === 0) return null
+  if (notable.length === 0) return null
 
   const section = document.createElement('div')
   section.className = 'behavior-timing'
 
   const title = document.createElement('div')
   title.className = 'behavior-timing__title'
-  const riskCount = withAsync.reduce((n, c) => n + c.effects.filter(e => e.risk).length, 0)
-  title.innerHTML = `⏱ 비동기 타이밍${riskCount ? ` <span class="behavior-timing__riskcount">위험 ${riskCount}</span>` : ''}`
+  const riskCount = notable.reduce((n, c) => n + c.effects.filter(e => e.risk).length, 0)
+  const staleCount = notable.reduce((n, c) => n + c.effects.filter(e => staleNames(e).length > 0).length, 0)
+  title.innerHTML = [
+    '⏱ 타이밍 · deps 점검',
+    riskCount ? `<span class="behavior-timing__riskcount">위험 ${riskCount}</span>` : '',
+    staleCount ? `<span class="behavior-timing__stalecount">deps 빠짐 ${staleCount}</span>` : '',
+  ].filter(Boolean).join(' ')
   section.appendChild(title)
 
-  withAsync.forEach(comp => {
+  notable.forEach(comp => {
     const name = document.createElement('div')
     name.className = 'behavior-comp__name'
     name.textContent = comp.name
@@ -152,9 +162,17 @@ function renderTimingSection(components, onNavigate) {
   return section
 }
 
+/** deps 에서 빠진 값 이름들 (없으면 빈 배열) */
+function staleNames(effect) {
+  return (effect.staleDeps || []).map(d => d.name)
+}
+
 function renderTimingTrack(effect, onNavigate) {
+  const stale = staleNames(effect)
+
   const track = document.createElement('div')
-  track.className = 'timing-track' + (effect.risk ? ' timing-track--risk' : '')
+  track.className = 'timing-track'
+    + (effect.risk ? ' timing-track--risk' : stale.length ? ' timing-track--stale' : '')
 
   const head = document.createElement('div')
   head.className = 'timing-track__head'
@@ -162,6 +180,7 @@ function renderTimingTrack(effect, onNavigate) {
   head.innerHTML = `
     <span class="timing-track__when">${triggerStep ? triggerStep.label : effect.hook}</span>
     ${effect.viaHook ? `<span class="hl-badge">${effect.viaHook}</span>` : ''}
+    ${stale.length ? `<span class="timing-track__stale">⚠ [${stale.join(', ')}] 빠짐?</span>` : ''}
     ${effect.hasCleanup ? '<span class="timing-track__flag">정리 있음</span>' : '<span class="timing-track__flag timing-track__flag--off">정리 없음</span>'}
     ${effect.line ? `<span class="timing-track__line">L${effect.line}</span>` : ''}
   `
@@ -173,7 +192,9 @@ function renderTimingTrack(effect, onNavigate) {
 
   const flow = document.createElement('div')
   flow.className = 'timing-flow'
-  const visualSteps = effect.timeline.filter(s => s.kind !== 'trigger' && s.kind !== 'risk')
+  const visualSteps = effect.timeline.filter(
+    s => s.kind !== 'trigger' && s.kind !== 'risk' && s.kind !== 'stale'
+  )
   visualSteps.forEach((step, i) => {
     if (i > 0) {
       const arrow = document.createElement('span')
@@ -186,14 +207,19 @@ function renderTimingTrack(effect, onNavigate) {
   track.appendChild(flow)
 
   const risk = effect.timeline.find(s => s.kind === 'risk')
-  if (risk) {
-    const warn = document.createElement('div')
-    warn.className = 'timing-warn'
-    warn.innerHTML = `<span class="timing-warn__label">⚠ ${risk.label}</span><span class="timing-warn__note">${risk.note}</span>`
-    track.appendChild(warn)
-  }
+  if (risk) track.appendChild(renderTimingWarn(risk, ''))
+
+  const staleStep = effect.timeline.find(s => s.kind === 'stale')
+  if (staleStep) track.appendChild(renderTimingWarn(staleStep, ' timing-warn--stale'))
 
   return track
+}
+
+function renderTimingWarn(step, modifier) {
+  const warn = document.createElement('div')
+  warn.className = 'timing-warn' + modifier
+  warn.innerHTML = `<span class="timing-warn__label">⚠ ${step.label}</span><span class="timing-warn__note">${step.note}</span>`
+  return warn
 }
 
 function renderTimingPill(step, onNavigate) {

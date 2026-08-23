@@ -68,6 +68,33 @@ try {
       (s.querySelector('.behavior-step__label')?.textContent || '').replace(/\s+/g, ' ').trim())
     log(`  event ${i + 1}: ` + steps.join('  →  '))
   })
+  // ⏱ 타이밍 · deps 점검 — 트랙 머리말/경고가 실제로 그려지는지 봅니다
+  const staleCode = `import { useState, useEffect } from 'react'
+
+export default function Ticker({ userId }) {
+  const [count, setCount] = useState(0)
+  const [user, setUser] = useState(null)
+  useEffect(() => {
+    fetchUser(userId).then((u) => setUser(u))
+  }, [])
+  useEffect(() => {
+    const t = setInterval(() => setCount(count + 1), 1000)
+    return () => clearInterval(t)
+  }, [])
+  return <div onClick={() => setCount(0)}>{count}</div>
+}
+`
+  const be2 = renderBehaviorView(parseBehavior(staleCode), () => {})
+  document.body.appendChild(be2)
+  const tracks = [...be2.querySelectorAll('.timing-track')]
+  log('timing tracks: ' + tracks.length)
+  log('timing title: ' + (be2.querySelector('.behavior-timing__title')?.textContent || '').replace(/\s+/g, ' ').trim())
+  tracks.forEach((t, i) => {
+    const when = t.querySelector('.timing-track__when')?.textContent || ''
+    const chip = t.querySelector('.timing-track__stale')?.textContent || '(빠짐 없음)'
+    const warns = [...t.querySelectorAll('.timing-warn__label')].map(w => w.textContent).join(' / ')
+    log(`  track ${i + 1}: ${when} | ${chip} | ${warns || '(경고 없음)'}`)
+  })
 } catch (err) {
   log('RESULT_OK: false\n' + err.stack)
 }

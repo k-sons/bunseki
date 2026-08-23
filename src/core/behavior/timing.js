@@ -15,9 +15,11 @@
  *   - hasCleanup    : 정리 함수를 return 하는가
  *   - guard         : `if (alive)` 류로 setState 를 감싸거나 AbortController 로 취소하는가
  *   - risk          : 비동기 + 가드 없는 deferred setState → 언마운트 후 setState 위험
+ *   - staleDeps     : effect 가 읽는데 deps 에는 없는 값 (deps.js) → 옛 값을 붙잡고 있음
  */
 
 import { walk, calleeName, isFunctionNode, lineOf } from './collect.js'
+import { findStaleDeps } from './deps.js'
 
 /**
  * 컴포넌트의 effect 목록(본문 AST 포함)과 상태 목록으로 타이밍을 분석합니다.
@@ -52,7 +54,8 @@ function analyzeOne(effect, setterNames, setterToState) {
   const asyncKind = hasAwait ? 'await' : hasThen ? '.then' : hasFetch ? 'fetch' : null
 
   // ── setter 들을 실행 시점(즉시 / 비동기 이후)과 가드 여부로 분류 ──
-  const setters = analyzeSetters(body, setterNames)
+  //    같은 훑기로 effect 가 읽는 이름(refs)도 모읍니다 — deps 대조에 씁니다.
+  const { setters, refs } = analyzeBody(body, setterNames)
   const immediate = setters.filter(s => !s.deferred)
   const deferred = setters.filter(s => s.deferred)
   const unguardedDeferred = deferred.filter(s => !s.guarded)
@@ -68,6 +71,15 @@ function analyzeOne(effect, setterNames, setterToState) {
 
   const hasGuard = hasAbort || (deferred.length > 0 && unguardedDeferred.length === 0)
 
+  // ── deps 에서 빠진 값 (stale closure) ──
+  const staleDeps = findStaleDeps({
+    owner: effect.owner,
+    deps: effect.deps,
+    depRoots: effect.depRoots,
+    body,
+    refs,
+  })
+
   return {
     line: effect.line,
     hook: effect.hook,
@@ -79,24 +91,36 @@ function analyzeOne(effect, setterNames, setterToState) {
     hasCleanup,
     hasGuard,
     risk,
+    staleDeps,
     setters: setters.map(s => ({ ...s, state: setterToState[s.name] || null })),
     timeline: buildTimeline({
-      effect, isAsync, asyncKind, immediate, deferred, hasCleanup, risk, setterToState,
+      effect, isAsync, asyncKind, immediate, deferred, hasCleanup, risk, staleDeps, setterToState,
     }),
   }
 }
 
+/** 훑을 때 들어가지 않는 가지 — 위치 정보와 타입 표기는 실행되는 코드가 아닙니다 */
+const SKIP_KEYS = new Set([
+  'loc', 'leadingComments', 'trailingComments',
+  'typeAnnotation', 'returnType', 'typeParameters',
+])
+
 /**
- * effect 본문의 setter 호출을 훑으며 각각이
- *   - deferred: 비동기(await/.then)가 끝난 뒤 실행되는가
- *   - guarded : if 문 안에 감싸여 있는가 (`if (alive) setX()` 류)
- * 인지 판정합니다.
+ * effect 본문을 한 번 훑으며 두 가지를 모읍니다.
+ *
+ *   setters — setter 호출이 각각
+ *             - deferred: 비동기(await/.then)가 끝난 뒤 실행되는가
+ *             - guarded : if 문 안에 감싸여 있는가 (`if (alive) setX()` 류)
+ *   refs    — effect 가 **읽는** 이름들. deps 와 대조해 빠진 값을 찾는 데 씁니다.
+ *             `user.id` 의 id, `{ id: 1 }` 의 키처럼 값을 읽는 자리가 아닌 이름과
+ *             중첩 함수의 파라미터는 세지 않습니다.
  *
  * 실행 순서를 흉내 내려고 블록 안 문장을 순서대로 보며 await 를 만난 뒤부터
  * deferred 로 넘깁니다. 중첩 함수는 경계에서 멈춰 서로 섞이지 않게 합니다.
  */
-function analyzeSetters(effectBody, setterNames) {
+function analyzeBody(effectBody, setterNames) {
   const found = []
+  const refs = []
 
   function visit(node, deferred, guarded) {
     if (!node || typeof node !== 'object') return
@@ -120,7 +144,31 @@ function analyzeSetters(effectBody, setterNames) {
         if (node.alternate) visit(node.alternate, deferred, true)
         return
 
-      case 'CallExpression': {
+      case 'Identifier':
+        // 여기까지 내려온 Identifier 는 "값을 읽는" 자리입니다.
+        refs.push({ name: node.name, line: lineOf(node), deferred })
+        return
+
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        // user.id → 읽는 값은 user 뿐, id 는 속성 이름입니다.
+        visit(node.object, deferred, guarded)
+        if (node.computed) visit(node.property, deferred, guarded)
+        return
+
+      case 'ObjectProperty':
+      case 'Property':
+        if (node.computed) visit(node.key, deferred, guarded)
+        visit(node.value, deferred, guarded)
+        return
+
+      case 'ObjectMethod':
+        if (node.computed) visit(node.key, deferred, guarded)
+        visitFunctionBody(node, deferred, guarded)
+        return
+
+      case 'CallExpression':
+      case 'OptionalCallExpression': {
         // .then(cb): 콜백은 응답 이후에 실행됩니다 → deferred
         if (calleeName(node) === 'then') {
           visit(node.callee, deferred, guarded)
@@ -139,7 +187,7 @@ function analyzeSetters(effectBody, setterNames) {
     }
 
     for (const key of Object.keys(node)) {
-      if (key === 'loc' || key === 'leadingComments' || key === 'trailingComments') continue
+      if (SKIP_KEYS.has(key)) continue
       visit(node[key], deferred, guarded)
     }
   }
@@ -161,7 +209,7 @@ function analyzeSetters(effectBody, setterNames) {
   }
 
   visitFunctionBody(effectBody, false, false)
-  return found
+  return { setters: found, refs }
 }
 
 /** 중첩 함수를 건너뛰고, 이 함수 레벨에 await 가 직접 있는지 봅니다 */
@@ -206,7 +254,7 @@ function usesAbort(node) {
 /**
  * UI 가 순서대로 그리기만 하면 되도록 타임라인 스텝을 평탄화합니다.
  */
-function buildTimeline({ effect, isAsync, asyncKind, immediate, deferred, hasCleanup, risk, setterToState }) {
+function buildTimeline({ effect, isAsync, asyncKind, immediate, deferred, hasCleanup, risk, staleDeps, setterToState }) {
   const steps = []
   const triggerLabel = effect.trigger === 'mount' ? '마운트 시 1회'
     : effect.trigger === 'every-render' ? '매 렌더마다'
@@ -249,6 +297,19 @@ function buildTimeline({ effect, isAsync, asyncKind, immediate, deferred, hasCle
       kind: 'risk',
       label: '언마운트 후 setState 위험',
       note: '응답이 오기 전에 컴포넌트가 사라지면, 없는 컴포넌트에 상태를 바꾸려 합니다. 정리 함수에서 취소하거나 alive 가드를 두세요.',
+    })
+  }
+
+  if (staleDeps && staleDeps.length > 0) {
+    const names = staleDeps.map(d => d.name).join(', ')
+    const late = staleDeps.some(d => d.inAsync)
+    steps.push({
+      kind: 'stale',
+      names: staleDeps.map(d => d.name),
+      label: `deps 에 빠진 값: ${names}`,
+      note: late
+        ? `effect 는 만들어질 때의 값을 붙잡아 둡니다. ${names} 가 deps 에 없으니, 응답이 온 뒤에도 처음 값 그대로를 씁니다.`
+        : `effect 는 만들어질 때의 값을 붙잡아 둡니다. ${names} 가 바뀌어도 이 effect 는 다시 실행되지 않고, 안에서는 처음 값 그대로입니다.`,
     })
   }
 
