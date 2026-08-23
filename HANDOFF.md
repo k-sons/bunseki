@@ -7,8 +7,8 @@
 
 ## 0. 새 세션이면 여기부터 (3분)
 
-1. `git log --oneline -5` — 마지막 커밋이 `25c8249` 인지 확인.
-2. `npm test` — **63 pass / 0 fail** 이면 출발점이 맞음.
+1. `git log --oneline -5` — 마지막 커밋이 `75a06da` 인지 확인.
+2. `npm test` — **71 pass / 0 fail** 이면 출발점이 맞음.
 3. 이 문서 **3장(현재 상태)** 과 **6장(다음 할 일)** 만 보면 바로 이어서 작업 가능.
 4. 코드를 만지기 전, 손댈 파일이 4장 "계약" 3개 중 어디에 걸리는지 확인.
 
@@ -105,18 +105,49 @@
   `.timing-pill--wide` 클래스 + 툴팁. CSS 는 대기 알약에 **줄무늬 결**(지나가는 시간처럼).
 - **`isAsync`/`risk` 판정은 건드리지 않음** — 순수하게 보여주기만 추가.
 
+### (7) B) 이벤트 연쇄에도 기다리는 구간 — 커밋 `0daccf8`
+- 상대 시간감이 ⏱ 타임라인에만 있어, 위쪽 이벤트 연쇄에서는 응답을 기다리는 자리가
+  드러나지 않았음. 두 섹션이 **같은 눈금**(weight)을 쓰게 맞춤.
+- `timing.js` 가 `describeWait(body)` · `describeAsyncPhase(body, setterNames)` 를 **export**,
+  `chain.js` 가 가져다 씁니다 (behavior 안쪽 의존, 순환 없음).
+- `chain.js`: 비동기 Effect 의 setter 를 응답 전/후로 갈라 사이에 `kind:'wait'` 스텝을
+  **한 번만** 끼움. 응답 뒤에 바뀌는 상태가 없으면(fire and forget) 넣지 않음.
+  - 연쇄는 setter 를 **이름 단위**로 나열하므로 `setLoading(true) … setLoading(false)` 처럼
+    응답 전후 모두 불리는 이름은 **"응답 전"** 으로 봅니다.
+- UI: 세로 목록이라 **높이**로 (`weight × 7px`). 대기 스텝은 번호를 먹지 않음(번호가 안 건너뜀).
+- **덧 — `.then(setUser)`**: setter 를 그대로 넘기는 형태를 `timing.js` 가 통째로 놓치고 있었음.
+  콜백으로 감싼 것과 같은 뜻이라 같게 셉니다. 그 결과 이 형태의 **언마운트 위험·Effect 관계도
+  이제 잡힙니다**(전에는 조용히 비어 있었음).
+
+### (8) E) 다지기 — 커밋 `75a06da`
+실제형 파일(최대 2643줄)과 좁은 화면으로 훑어 나온 것들:
+- **오탐 1건 수정** — `if (!alive) return` 을 가드로 못 봐 헛경보. `isEarlyReturnGuard()` 추가.
+  `if (…) return|throw` 뒤의 문장은 조건이 참일 때만 실행되므로 감싼 것과 같게 봄.
+  **else 가 붙으면 세지 않음**(갈림길일 뿐 "여기서 끝" 이 아님).
+- **버그 1건 수정** — `<button onClick>` 라벨이 innerHTML 에서 **진짜 `<button>` 으로 렌더**돼
+  이벤트 스텝이 빈칸으로 보였음. `ui/behavior.js` 에 `esc()` 를 두고 **코드에서 온 문자열은
+  전부 통과**시킴 (라벨·detail·note·배지·deps 이름·훅 이름·상태 요약).
+  → **새 innerHTML 을 쓸 땐 반드시 `esc()` 를 거칠 것.**
+- **좁은 화면** — 대기 알약의 `min-width` 가 `max-width` 를 이겨 넘칠 수 있었음 →
+  `min(Npx, 100%)`. 360/768/1280 에서 가로 넘침 0px 확인.
+- **접근성** — 폭·높이로만 전해지던 대기 시간을 `aria-label` 로도 제공.
+- **성능은 문제 없음** — 2643줄에서 behavior 70ms · parser 71ms, 대략 선형.
+- 다른 렌더러(structure/metrics/flow)는 식별자만 끼워 넣어 `<` 가 새지 않음 — 손대지 않음.
+
 ---
 
 ## 3. 현재 상태 (스냅샷)
 
-- ✅ **작업트리 깨끗. 미커밋 없음.** `main` 최신 = `25c8249` (A 트랙 4단계 완료).
-- ✅ `npm test` → **63 pass / 0 fail**
-  (parser 10 · behavior 5 · examples 3 · timing 15 · stale-deps 11 · interplay 19)
+- ✅ **작업트리 깨끗. 미커밋 없음.** `main` 최신 = `75a06da` (A 트랙 + B + E 완료).
+- ✅ `npm test` → **71 pass / 0 fail**
+  (parser 10 · behavior 10 · examples 3 · timing 18 · stale-deps 11 · interplay 19)
 - ✅ `npx vite build` 정상. 초기 번들 59KB, `@babel/parser` 는 `lib` 청크(≈300KB)로 **지연 로드**.
 - ✅ 브라우저 실제 렌더 확인(headless Chrome + `test/browser-verify.html`):
   `⏱ 타이밍 · deps 점검 / 위험 1 / deps 빠짐 2`, `⚠ [userId] 빠짐?` 칩,
   `🔗 Effect 사이 관계 / 무한 루프 3 / 경합 2` 카드 7장까지 그려짐.
   대기 알약도 실제 폭으로: `Promise 대기 · 시간 미상 [132px]`, `await 대기 · ≈3초 [220px]`.
+  이벤트 연쇄에도 `⏳ 응답 대기 · 시간 미상 [높이 42px]`, **라벨 HTML 주입 0건**,
+  **가로 넘침 0px**(360/768/1280).
 - ✅ 노이즈 점검: useMemo/useCallback/AbortController/ref 가 섞인 대시보드 컴포넌트에서
   **오탐 0**(deps·interplay 모두), ESLint `exhaustive-deps` 와 같은 지점만 지적.
 
@@ -135,7 +166,7 @@ src/
 │   └── behavior/               # ⚡ 동작 엔진 (AST)
 │       ├── index.js            # parseBehavior(code) → { components[], error }
 │       ├── collect.js          # 상태/effect/핸들러/컴포넌트 수집 (walk 등 공용 헬퍼)
-│       ├── chain.js            # 이벤트→setter→상태→Effect 연쇄(Step 배열)
+│       ├── chain.js            # 이벤트→setter→상태→Effect 연쇄(Step 배열) + 대기 스텝
 │       ├── hooks.js            # 같은 파일 커스텀 훅 추적 + 스코프 경계
 │       ├── timing.js           # ⏱ 비동기 타이밍 + 언마운트 위험 + 참조 수집 + 대기 무게
 │       ├── deps.js             # ⚠ deps 에서 빠진 값 = stale closure
@@ -163,6 +194,15 @@ hasCleanup, hasGuard, risk, staleDeps, setters[], timeline[] }` 로 바꿔 UI �
 UI 는 `trigger·risk·stale` 을 뺀 나머지를 순서대로 알약으로 그린다.
 `async-wait` 만 `weight`(2~12) 를 갖고, UI 가 그 값으로 **폭**을 정한다 — 실제 ms 가 아니라 눈금.
 
+### 🔗 이벤트 연쇄 스텝 (UI 계약)
+`kind: 'event'|'call'|'setter'|'effect'|'wait'|'rerender'|'boundary'`
+`wait` 만 `weight` 를 갖고, 세로 목록이라 **높이**로 그린다(`weight × 7px`).
+`wait` 는 스텝 번호를 먹지 않는다.
+
+### 🔒 UI 이스케이프 규칙
+`ui/behavior.js` 에서 `innerHTML` 에 **코드에서 온 문자열**을 넣을 땐 반드시 `esc()`.
+안 그러면 `<button onClick>` 같은 라벨이 진짜 엘리먼트로 렌더된다.
+
 ### 🔗 interplay 항목 (UI 계약)
 `{ kind:'loop'|'contention'|'cascade', severity:'risk'|'warn'|'info', label, note,
 lines:number[], steps:[{kind:'effect'|'setter'|'loopback', label, detail, line, phase?, guarded?}] }`
@@ -187,15 +227,15 @@ npx vite --port 5199 &
 
 ## 6. 다음 할 일
 
-사용자가 승인한 **A 트랙 4단계는 여기서 전부 완료**됐습니다 (1·2·3·4 커밋됨).
-다음 방향은 아직 정해지지 않았으니 **사용자와 먼저 합의할 것.** 후보:
+A 트랙(1~4) · **B) 이벤트 연쇄 대기 구간** · **E) 다지기** 까지 완료·커밋됨.
+다음 방향은 정해지지 않았으니 **사용자와 먼저 합의할 것.** 남은 후보:
 
-- **B) 대기 구간을 이벤트 연쇄에도** — 지금 상대 시간감은 ⏱ 타임라인에만 있습니다.
-  위쪽 이벤트 연쇄(`chain.js`)의 비동기 스텝에도 같은 눈금을 주면 세 섹션의 시간 표현이 맞습니다.
 - **C) 조건부 실행 표시** — `if (tab !== 'posts') return` 같은 이른 반환·조건 가드를
   타임라인에 "여기서 멈출 수 있음" 으로 그리기.
-- **D) 커스텀 훅 경계 시각화** — `viaHook` 배지는 있지만, 훅 안팎의 상태 흐름이 한눈에 안 보임.
-- **E) 다지기** — 큰 실제 파일로 오탐 점검, 성능(수백 줄 컴포넌트), 접근성/모바일 폭.
+  (재료는 이미 있음: `isEarlyReturnGuard()` · setter 의 `guarded` 플래그.)
+- **D) 커스텀 훅 경계 시각화** — `viaHook` 배지는 있지만 훅 안팎의 상태 흐름이 한눈에 안 보임.
+- **F) `.catch(setError)` 계열** — 지금은 `.then` 만 setter 로 셈. `.catch`/`.finally` 로
+  넘긴 setter 는 놓침(의도된 false negative). 넓힐지는 판단 필요.
 
 작업 방식(확립됨): **작게 구현 → 테스트 추가 → `npm test` → 브라우저 실제 렌더 확인 → 커밋.**
 그리고 마지막에 **이 문서를 갱신**하고 커밋.
@@ -218,6 +258,7 @@ npx vite --port 5199 &
   **놓치는 쪽(false negative)이 헛경보보다 낫다**는 기준.
   규칙을 넓힐 땐 `test/stale-deps.test.mjs` 의 "잡으면 안 되는 것" 6개와
   `test/interplay.test.mjs` 의 "잡으면 안 되는 것" 3개 +
-  `test/timing.test.mjs` 의 "await 밖의 타이머는 대기 시간으로 세지 않는다" +
+  `test/timing.test.mjs` 의 "await 밖의 타이머는 대기 시간으로 세지 않는다" ·
+  "else 가 붙으면 이른 반환이 아니라 갈림길이다" +
   "deps 배열이 없는 Effect" 절의 안 잡는 케이스 4개를 먼저 확인.
 - 임시 검증 파일은 repo 밖(세션 scratchpad)에 만들 것. 작업트리는 깨끗하게 유지.
