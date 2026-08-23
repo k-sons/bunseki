@@ -12,6 +12,7 @@ const STEP_KIND_LABEL = {
   setter: '상태 변경',
   effect: 'Effect 실행',
   rerender: '화면 갱신',
+  wait: '대기',
   boundary: '여기서부터 범위 밖',
 }
 
@@ -172,6 +173,8 @@ function renderTimingSection(components, onNavigate) {
 /** 대기 알약의 폭 = weight × 이 값(px). 최대 무게는 12 (timing.js 와 맞춘 상한). */
 const WAIT_PX_PER_WEIGHT = 22
 const WAIT_WEIGHT_MAX = 12
+/** 이벤트 연쇄는 세로라 높이로 나타냅니다 — 세로 공간이 아까워 더 촘촘하게 */
+const WAIT_PX_PER_WEIGHT_V = 7
 
 /** deps 에서 빠진 값 이름들 (없으면 빈 배열) */
 function staleNames(effect) {
@@ -386,9 +389,14 @@ function renderEventDetail(comp, ev, onNavigate) {
     const flowEl = document.createElement('div')
     flowEl.className = 'behavior-flow stagger'
 
+    let num = 0
     flow.steps.forEach((step, idx) => {
       if (idx > 0) flowEl.appendChild(renderConnector(step))
-      flowEl.appendChild(renderStep(step, idx + 1, onNavigate))
+      if (step.kind === 'wait') {
+        flowEl.appendChild(renderWaitStep(step))
+        return
+      }
+      flowEl.appendChild(renderStep(step, ++num, onNavigate))
     })
 
     wrap.appendChild(flowEl)
@@ -421,6 +429,26 @@ function renderConnector(nextStep) {
   }
 
   return conn
+}
+
+/**
+ * 이벤트 연쇄의 기다리는 구간.
+ *
+ * ⏱ 타임라인은 가로라 폭으로, 이 연쇄는 세로라 **높이**로 같은 눈금을 나타냅니다.
+ * 세로 공간은 아까우니 가로보다 촘촘하게(weight × 7px) 씁니다.
+ */
+function renderWaitStep(step) {
+  const el = document.createElement('div')
+  el.className = 'behavior-wait'
+  el.style.minHeight = `${Math.min(step.weight || 1, WAIT_WEIGHT_MAX) * WAIT_PX_PER_WEIGHT_V}px`
+  el.title = step.waitMs != null
+    ? '기다리는 구간 — 코드에 적힌 지연값을 높이로 옮겼습니다'
+    : '기다리는 구간 — 실제 시간은 코드로 알 수 없어 대략적인 높이입니다'
+  el.innerHTML = `
+    <span class="behavior-wait__label">⏳ ${step.label}</span>
+    <span class="behavior-wait__detail">${step.detail}</span>
+  `
+  return el
 }
 
 function renderStep(step, num, onNavigate) {

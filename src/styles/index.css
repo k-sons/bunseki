@@ -1363,6 +1363,24 @@ body {
 }
 
 /* --- 스텝 사이 연결선 --- */
+/* 이벤트 연쇄의 기다리는 구간 — 높이가 상대적인 시간감입니다 (실제 ms 아님).
+   ⏱ 타임라인의 대기 알약과 같은 눈금·같은 색을 씁니다. */
+.behavior-wait {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 21px;
+  padding: 6px 0 6px 13px;
+  border-left: 2px dashed hsla(200, 80%, 55%, 0.45);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: hsl(200, 80%, 65%);
+}
+
+.behavior-wait__detail {
+  opacity: 0.7;
+}
+
 .behavior-connector {
   display: flex;
   align-items: center;

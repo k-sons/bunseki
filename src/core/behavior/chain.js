@@ -5,11 +5,15 @@
  *   이벤트 → setter 호출 → 상태 변경 → deps 가 일치하는 Effect 재실행
  *          → Effect 안의 호출/비동기 → 또 다른 setter → 상태 변경 → 리렌더
  *
+ * 비동기 Effect 는 응답 전/후로 갈라 그 사이에 `kind:'wait'` 스텝을 끼웁니다 —
+ * ⏱ 타임라인과 같은 눈금(weight)이라, 두 섹션의 "기다리는 시간" 표현이 맞습니다.
+ *
  * UI 가 단순해지도록 여기서 **평탄화된 Step 배열**까지 만들어 넘깁니다.
  * 렌더러는 배열을 순서대로 그리기만 하면 됩니다.
  */
 
 import { findSetterUsage, findCalls, findDirectCalls, findAsyncMarks, lineOf } from './collect.js'
+import { describeAsyncPhase } from './timing.js'
 
 /** 핸들러에서 로컬 함수를 따라 들어가는 최대 깊이 */
 const MAX_FN_DEPTH = 3
@@ -261,7 +265,32 @@ function appendEffectSteps({ steps, state, effects, setterToState, setterNames, 
       })
     }
 
-    for (const s of innerSetters) {
+    // 비동기 Effect 는 "응답 전에 곧바로 바뀌는 상태" 와 "응답이 온 뒤 바뀌는 상태" 가
+    // 섞여 있습니다. 사이에 기다리는 구간을 끼워 넣으려고 순서를 갈라 둡니다.
+    const phase = async.length ? describeAsyncPhase(effect.body, setterNames) : null
+    const ordered = phase
+      ? [
+          ...innerSetters.filter(s => !phase.deferred.has(s)),
+          ...innerSetters.filter(s => phase.deferred.has(s)),
+        ]
+      : innerSetters
+    let waitShown = false
+
+    for (const s of ordered) {
+      // 응답 뒤에 바뀌는 첫 상태 앞에서 한 번만 — 여기서 시간이 흐릅니다
+      if (phase && !waitShown && phase.deferred.has(s)) {
+        steps.push({
+          kind: 'wait',
+          label: '응답 대기',
+          detail: phase.wait.detail,
+          weight: phase.wait.weight,
+          waitMs: phase.wait.ms,
+          line: null,
+          badges: [],
+        })
+        waitShown = true
+      }
+
       const nextState = setterToState[s]
       steps.push({
         kind: 'setter',

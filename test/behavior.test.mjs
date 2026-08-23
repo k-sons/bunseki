@@ -99,3 +99,95 @@ test('문법 오류 코드는 error 를 돌려주고 throw 하지 않는다', ()
   assert.ok(b.error, '에러 객체가 있어야 한다')
   assert.equal(b.components.length, 0)
 })
+
+
+/* ── 이벤트 연쇄의 기다리는 구간 ────────────────────────────────────────────
+ * 비동기 Effect 는 "응답 전에 곧바로 바뀌는 상태" 와 "응답 뒤에 바뀌는 상태" 사이에
+ * kind:'wait' 스텝이 끼어들어야 합니다. ⏱ 타임라인과 같은 눈금(weight)을 씁니다.
+ */
+
+const flowOf = (code, i = 0) => {
+  const comp = parseBehavior(code).components.find(c => c.events.length > 0)
+  return comp.events[i].flows[0].steps
+}
+
+const WAIT_SAMPLE = `import { useState, useEffect } from 'react'
+export default function P({ id }) {
+  const [q, setQ] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [items, setItems] = useState([])
+  useEffect(() => {
+    setLoading(true)
+    search(q).then((res) => { setItems(res); setLoading(false) })
+  }, [q])
+  return <input onChange={(e) => setQ(e.target.value)} />
+}
+`
+
+test('비동기 Effect 안에서 응답 전/후 사이에 대기 스텝이 끼어든다', () => {
+  const steps = flowOf(WAIT_SAMPLE)
+  const kinds = steps.map(s => s.kind)
+  assert.ok(kinds.includes('wait'), '대기 스텝이 있어야 한다')
+
+  const w = kinds.indexOf('wait')
+  const labels = steps.map(s => s.label)
+  // setLoading(true) 는 응답 전, setItems/setLoading(false) 는 응답 뒤
+  assert.ok(labels.indexOf('setLoading()') < w, '곧바로 바뀌는 상태는 대기보다 앞')
+  assert.ok(labels.indexOf('setItems()') > w, '응답 뒤에 바뀌는 상태는 대기보다 뒤')
+})
+
+test('대기 스텝은 ⏱ 타임라인과 같은 눈금을 쓴다', () => {
+  const wait = flowOf(WAIT_SAMPLE).find(s => s.kind === 'wait')
+  assert.equal(wait.label, '응답 대기')
+  assert.equal(wait.detail, '시간 미상', '네트워크 왕복은 알 수 없다')
+  assert.ok(wait.weight > 1 && wait.weight <= 12)
+  assert.equal(wait.waitMs, null)
+})
+
+test('await 하는 지연 리터럴은 연쇄에서도 읽힌다', () => {
+  const steps = flowOf(`import { useState, useEffect } from 'react'
+export default function P() {
+  const [q, setQ] = useState('')
+  const [done, setDone] = useState(false)
+  useEffect(() => {
+    async function run() {
+      await sleep(1500)
+      setDone(true)
+    }
+    run()
+  }, [q])
+  return <input onChange={(e) => setQ(e.target.value)} />
+}
+`)
+  const wait = steps.find(s => s.kind === 'wait')
+  assert.equal(wait.waitMs, 1500)
+  assert.equal(wait.detail, '≈1.5초')
+})
+
+test('동기 Effect 에는 대기 스텝을 넣지 않는다', () => {
+  const steps = flowOf(`import { useState, useEffect } from 'react'
+export default function P() {
+  const [q, setQ] = useState('')
+  const [n, setN] = useState(0)
+  useEffect(() => { setN(q.length) }, [q])
+  return <input onChange={(e) => setQ(e.target.value)} />
+}
+`)
+  assert.equal(steps.filter(s => s.kind === 'wait').length, 0)
+})
+
+test('응답 뒤에 바뀌는 상태가 없으면 대기 스텝도 없다', () => {
+  // 기다린 뒤에 아무 일도 안 일어나면 보여줄 것이 없습니다 (fire and forget)
+  const steps = flowOf(`import { useState, useEffect } from 'react'
+export default function P() {
+  const [q, setQ] = useState('')
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    setBusy(true)
+    logSearch(q).then(() => {})
+  }, [q])
+  return <input onChange={(e) => setQ(e.target.value)} />
+}
+`)
+  assert.equal(steps.filter(s => s.kind === 'wait').length, 0)
+})

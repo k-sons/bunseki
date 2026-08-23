@@ -196,3 +196,17 @@ test('동기 effect 에는 대기 스텝 자체가 없다', () => {
   }, [id])`)
   assert.equal(t.filter(e => waitStep(e)).length, 0)
 })
+
+
+test('.then(setUser) 처럼 그대로 넘긴 setter 도 응답 뒤 호출로 센다', () => {
+  // 콜백으로 감싼 .then((u) => setUser(u)) 과 같은 뜻입니다.
+  // 이 형태를 놓치면 위험 판정·연쇄·Effect 관계가 모두 비어 버립니다.
+  const t = timingOf(`  useEffect(() => {
+    fetchUser(id).then(setUser)
+  }, [id])`)
+  const e = firstAsync(t)
+  const s = e.setters.find(x => x.name === 'setUser')
+  assert.ok(s, '넘긴 setter 를 찾아야 한다')
+  assert.equal(s.deferred, true)
+  assert.equal(e.risk, 'unmount-setstate', '가드가 있을 수 없는 형태라 위험이 맞다')
+})

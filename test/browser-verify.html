@@ -63,9 +63,13 @@ try {
   log('behavior events: ' + chips.length)
   chips.forEach((chip, i) => {
     chip.click()
-    const steps = [...be.querySelectorAll('.behavior-detail .behavior-step')].map(s =>
-      (s.querySelector('.behavior-step__kind')?.textContent || '') + ':' +
-      (s.querySelector('.behavior-step__label')?.textContent || '').replace(/\s+/g, ' ').trim())
+    // 대기 구간은 .behavior-step 이 아닌 .behavior-wait 로 그려집니다 — 높이까지 함께 봅니다
+    const rows = [...be.querySelectorAll('.behavior-detail .behavior-step, .behavior-detail .behavior-wait')]
+    const steps = rows.map(s =>
+      s.classList.contains('behavior-wait')
+        ? `대기:${s.textContent.replace(/\s+/g, ' ').trim()} [높이 ${s.style.minHeight}]`
+        : (s.querySelector('.behavior-step__kind')?.textContent || '') + ':' +
+          (s.querySelector('.behavior-step__label')?.textContent || '').replace(/\s+/g, ' ').trim())
     log(`  event ${i + 1}: ` + steps.join('  →  '))
   })
   // ⏱ 타이밍 · deps 점검 — 트랙 머리말/경고가 실제로 그려지는지 봅니다

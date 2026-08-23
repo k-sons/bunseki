@@ -178,8 +178,15 @@ function analyzeBody(effectBody, setterNames) {
         if (calleeName(node) === 'then') {
           visit(node.callee, deferred, guarded, nested)
           for (const arg of node.arguments) {
-            if (isFunctionNode(arg)) visitFunctionBody(arg, true, guarded, true)
-            else visit(arg, deferred, guarded, nested)
+            if (isFunctionNode(arg)) {
+              visitFunctionBody(arg, true, guarded, true)
+            } else if (arg.type === 'Identifier' && setterNames.includes(arg.name)) {
+              // .then(setUser) — 값을 읽는 자리가 아니라, 응답이 오면 그대로 불립니다.
+              // 콜백으로 감싼 .then((u) => setUser(u)) 과 같은 뜻이므로 같게 셉니다.
+              found.push({ name: arg.name, line: lineOf(arg), deferred: true, guarded, nested: true })
+            } else {
+              visit(arg, deferred, guarded, nested)
+            }
           }
           return
         }
@@ -278,14 +285,14 @@ function buildTimeline({ effect, isAsync, asyncKind, immediate, deferred, hasCle
   }
 
   if (isAsync) {
-    const wait = estimateWait(effect.body)
+    const wait = describeWait(effect.body)
     steps.push({
       kind: 'async-wait',
       label: `${asyncKind === '.then' ? 'Promise' : asyncKind} 대기`,
       badges: [asyncKind],
       weight: wait.weight,
       waitMs: wait.ms,
-      detail: wait.ms != null ? `≈${formatDuration(wait.ms)}` : '시간 미상',
+      detail: wait.detail,
     })
     steps.push({ kind: 'resolve', label: '응답 도착' })
     for (const s of deferred) {
@@ -368,14 +375,37 @@ function formatDuration(ms) {
  *   await new Promise(r => setTimeout(r, 300)) → 300
  * 못 찾으면 ms 는 null (= 시간 미상, 기본 무게).
  */
-function estimateWait(body) {
+export function describeWait(body) {
   let ms = null
   walk(body, (n) => {
     if (n.type !== 'AwaitExpression') return
     const found = maxDelayLiteral(n.argument)
     if (found != null && (ms == null || found > ms)) ms = found
   })
-  return { ms, weight: ms == null ? WAIT_WEIGHT_UNKNOWN : weightForMs(ms) }
+  return {
+    ms,
+    weight: ms == null ? WAIT_WEIGHT_UNKNOWN : weightForMs(ms),
+    detail: ms == null ? '시간 미상' : `≈${formatDuration(ms)}`,
+  }
+}
+
+/**
+ * 이벤트 연쇄(chain.js)도 같은 눈금을 쓰도록, effect 본문을 응답 전/후로 갈라 줍니다.
+ *   deferred — 응답이 온 뒤에야 불리는 setter 이름들
+ *   wait     — 그 사이 기다리는 구간의 무게/표기 (describeWait 와 같은 값)
+ */
+export function describeAsyncPhase(body, setterNames) {
+  const { setters } = analyzeBody(body, setterNames)
+  const immediate = new Set(setters.filter(s => !s.deferred).map(s => s.name))
+  return {
+    // 연쇄는 setter 를 **이름 단위**로 나열하므로, 같은 setter 가 응답 전후로 모두
+    // 불릴 수 있습니다(setLoading(true) … .then(() => setLoading(false))).
+    // 그럴 땐 "응답 전" 으로 봅니다 — 이벤트 직후 곧바로 한 번 바뀌는 것이 사실이니까.
+    deferred: new Set(
+      setters.filter(s => s.deferred && !immediate.has(s.name)).map(s => s.name)
+    ),
+    wait: describeWait(body),
+  }
 }
 
 /** 지연을 뜻하는 호출의 ms 리터럴 중 가장 큰 값 (없으면 null) */
