@@ -4,7 +4,7 @@
  * 모든 모듈을 연결하고 앱 전체를 구동합니다.
  */
 
-import { renderHighlightView, scrollToLine } from './core/highlighter.js'
+import { renderHighlightView, scrollToLine, highlightCode } from './core/highlighter.js'
 import { calculateMetrics, renderMetricsView } from './core/metrics.js'
 import { renderFlowView } from './core/flow.js'
 import { renderStructureView } from './ui/structure.js'
@@ -13,6 +13,7 @@ import { EXAMPLES } from './data/examples.js'
 // ===== DOM References =====
 const codeInput = document.getElementById('code-input')
 const editorLines = document.getElementById('editor-lines')
+const editorHighlight = document.getElementById('editor-highlight')
 const selectLang = document.getElementById('select-lang')
 const btnAnalyze = document.getElementById('btn-analyze')
 const btnExample = document.getElementById('btn-example')
@@ -52,14 +53,41 @@ function updateLineNumbers() {
   editorLines.innerHTML = html
 }
 
-// Sync scroll between textarea and line numbers
+// ===== Editor Syntax Highlight (입력칸 뒤판) =====
+// textarea 는 토큰별 색을 못 칠하므로, 같은 위치에 겹쳐 둔 <pre> 를 Prism 으로
+// 칠해 색을 보여줍니다. 앞의 textarea 글자는 투명이라 뒤판 색이 그대로 드러납니다.
+const editorHighlightCode = editorHighlight.querySelector('code')
+
+function renderEditorHighlight() {
+  const language = selectLang.value
+  // 마지막 줄이 개행으로 끝나면 <pre> 에서 잘려 보이므로 여유 개행을 덧댑니다.
+  const src = codeInput.value + '\n'
+  editorHighlightCode.innerHTML = highlightCode(src, language)
+  syncEditorScroll()
+}
+
+function syncEditorScroll() {
+  editorHighlight.scrollTop = codeInput.scrollTop
+  editorHighlight.scrollLeft = codeInput.scrollLeft
+}
+
+// 매 키 입력마다 전체를 다시 칠하면 긴 코드에서 버벅일 수 있어 디바운스합니다.
+let highlightTimer = null
+function scheduleEditorHighlight() {
+  if (highlightTimer) clearTimeout(highlightTimer)
+  highlightTimer = setTimeout(renderEditorHighlight, 120)
+}
+
+// Sync scroll between textarea and line numbers + highlight overlay
 codeInput.addEventListener('scroll', () => {
   editorLines.scrollTop = codeInput.scrollTop
+  syncEditorScroll()
 })
 
 codeInput.addEventListener('input', () => {
   updateLineNumbers()
   updateQuickStatus()
+  scheduleEditorHighlight()
 })
 
 // Tab key support in textarea
@@ -71,6 +99,7 @@ codeInput.addEventListener('keydown', (e) => {
     codeInput.value = codeInput.value.substring(0, start) + '  ' + codeInput.value.substring(end)
     codeInput.selectionStart = codeInput.selectionEnd = start + 2
     updateLineNumbers()
+    renderEditorHighlight()
   }
 
   // Ctrl+Enter → analyze
@@ -298,6 +327,7 @@ btnTheme.addEventListener('click', toggleTheme)
 btnAnalyze.addEventListener('click', analyze)
 selectLang.addEventListener('change', () => {
   updateQuickStatus()
+  renderEditorHighlight()
   if (codeInput.value.trim()) {
     analyze()
   }
@@ -318,6 +348,7 @@ function clearCode() {
   codeInput.value = ''
   updateLineNumbers()
   updateQuickStatus()
+  renderEditorHighlight()
   currentAnalysis = null
 
   // Reset panels to placeholder
@@ -356,6 +387,7 @@ btnExample.addEventListener('click', () => {
   selectLang.value = example.language
   updateLineNumbers()
   updateQuickStatus()
+  renderEditorHighlight()
 
   // Auto-analyze
   analyze()
@@ -460,6 +492,7 @@ document.addEventListener('mouseup', () => {
 // ===== Initialize =====
 updateLineNumbers()
 updateQuickStatus()
+renderEditorHighlight()
 
 // Show a welcome hint
 console.log(

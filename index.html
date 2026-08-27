@@ -103,9 +103,12 @@
       </div>
       <div class="editor-wrap">
         <div class="editor-lines" id="editor-lines" aria-hidden="true"></div>
-        <textarea id="code-input" class="editor-textarea" spellcheck="false" autocomplete="off" autocorrect="off"
-          autocapitalize="off" placeholder="여기에 React / React Native 코드를 붙여넣으세요...&#10;&#10;Ctrl+Enter 로 분석 실행"
-          aria-label="코드 입력 에디터"></textarea>
+        <div class="editor-input-area">
+          <pre class="editor-highlight" id="editor-highlight" aria-hidden="true"><code></code></pre>
+          <textarea id="code-input" class="editor-textarea" spellcheck="false" autocomplete="off" autocorrect="off"
+            autocapitalize="off" placeholder="여기에 React / React Native 코드를 붙여넣으세요...&#10;&#10;Ctrl+Enter 로 분석 실행"
+            aria-label="코드 입력 에디터"></textarea>
+        </div>
       </div>
     </section>
 

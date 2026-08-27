@@ -418,28 +418,65 @@ body {
   padding-right: 10px;
 }
 
-.editor-textarea {
+/* textarea 와 하이라이트 <pre> 를 정확히 겹치기 위한 공통 상자 */
+.editor-input-area {
   flex: 1;
+  position: relative;
+  min-width: 0;
+  background: var(--code-bg);
+  overflow: hidden;
+}
+
+/* textarea·pre 가 반드시 동일하게 가져야 하는 텍스트 배치 규칙 */
+.editor-textarea,
+.editor-highlight {
+  position: absolute;
+  inset: 0;
+  margin: 0;
   padding: 12px 16px;
   font-family: var(--font-mono);
   font-size: 0.82rem;
   line-height: 1.65;
-  color: var(--text-primary);
-  background: var(--code-bg);
-  border: none;
-  outline: none;
-  resize: none;
   tab-size: 2;
   -moz-tab-size: 2;
   white-space: pre;
+  border: none;
+  box-sizing: border-box;
+}
+
+/* 뒤판: Prism 이 칠한 색이 실제로 보이는 층 */
+.editor-highlight {
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--text-primary);
+  background: transparent;
+}
+.editor-highlight code {
+  font: inherit;
+  white-space: inherit;
+  background: none;
+}
+
+/* 앞판: 글자는 투명, 커서만 보이게 해서 뒤판 색이 그대로 드러남 */
+.editor-textarea {
+  color: transparent;
+  background: transparent;
+  outline: none;
+  resize: none;
   overflow: auto;
   caret-color: var(--accent);
-  transition: background var(--dur-normal) var(--ease-out);
+  -webkit-text-fill-color: transparent;
 }
 
 .editor-textarea::placeholder {
   color: var(--text-tertiary);
+  -webkit-text-fill-color: var(--text-tertiary);
   font-style: italic;
+}
+
+/* 드래그 선택 영역은 보이게 (투명 글자 위에서도 선택 확인 가능) */
+.editor-textarea::selection {
+  background: var(--accent-soft, rgba(129, 140, 248, 0.3));
 }
 
 /* --- Resizer --- */

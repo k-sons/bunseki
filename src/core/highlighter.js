@@ -129,7 +129,7 @@ export function renderHighlightView(code, analysis, language = 'jsx') {
  * Prism.js로 코드를 하이라이트합니다.
  * 실패하더라도 하이라이팅만 포기하고 코드 자체는 그대로 보여줍니다.
  */
-function highlightCode(code, language) {
+export function highlightCode(code, language) {
   try {
     const grammar = Prism.languages[language] || Prism.languages.javascript
     return Prism.highlight(code, grammar, language)
