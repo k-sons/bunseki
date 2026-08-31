@@ -22,6 +22,7 @@ const btnExport = document.getElementById('btn-export')
 const btnTheme = document.getElementById('btn-theme')
 const btnClear = document.getElementById('btn-clear')
 const btnClearEditor = document.getElementById('btn-clear-editor')
+const btnCopyEditor = document.getElementById('btn-copy-editor')
 
 const panelHighlight = document.getElementById('panel-highlight')
 const panelStructure = document.getElementById('panel-structure')
@@ -429,6 +430,54 @@ function clearCode() {
 
 if (btnClear) btnClear.addEventListener('click', clearCode)
 if (btnClearEditor) btnClearEditor.addEventListener('click', clearCode)
+
+const COPY_LABEL = btnCopyEditor ? btnCopyEditor.innerHTML : '복사'
+let copyResetTimer = null
+
+function flashCopyLabel(html) {
+  if (!btnCopyEditor) return
+  btnCopyEditor.innerHTML = html
+  if (copyResetTimer) clearTimeout(copyResetTimer)
+  copyResetTimer = setTimeout(() => {
+    btnCopyEditor.innerHTML = COPY_LABEL
+    copyResetTimer = null
+  }, 2000)
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.setAttribute('readonly', '')
+    ta.style.position = 'fixed'
+    ta.style.left = '-9999px'
+    document.body.appendChild(ta)
+    ta.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(ta)
+    if (!ok) throw new Error('copy failed')
+  }
+}
+
+if (btnCopyEditor) {
+  btnCopyEditor.addEventListener('click', async () => {
+    const src = codeInput.value
+    if (!src) {
+      flashCopyLabel('복사할 코드가 없습니다')
+      return
+    }
+
+    try {
+      await copyText(src)
+      flashCopyLabel('<span style="color:var(--accent)">복사 완료!</span>')
+    } catch (err) {
+      flashCopyLabel('<span style="color:red">복사 실패</span>')
+      console.error(err)
+    }
+  })
+}
 
 // ===== Example Code =====
 let currentExampleIndex = 0
