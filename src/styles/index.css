@@ -1274,6 +1274,162 @@ body {
   opacity: 0.55;
 }
 
+/* --- 두 축 (화면 · 동작 흐름) ---
+ * 기존 세로 스텝을 같은 시간축의 두 칸으로 나눕니다.
+ * 분석은 다시 하지 않고, 이미 있는 스텝을 갈라 놓을 뿐입니다. */
+.behavior-rails__legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+  margin-bottom: 12px;
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+}
+
+.behavior-rails__key {
+  font-weight: 600;
+  font-size: 0.7rem;
+}
+
+.behavior-rails__key--screen { color: hsl(280, 55%, 68%); }
+.behavior-rails__key--flow { color: hsl(160, 50%, 52%); }
+.behavior-rails__key--mesh { color: hsl(45, 80%, 62%); }
+
+.behavior-rails__hint {
+  margin-right: 8px;
+}
+
+.behavior-rails__head,
+.behavior-railrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr);
+  align-items: stretch;
+  column-gap: 8px;
+}
+
+.behavior-rails__head {
+  margin-bottom: 6px;
+  padding: 0 2px;
+}
+
+.behavior-rails__col {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.behavior-railrow {
+  margin: 2px 0;
+}
+
+.behavior-railrow__screen,
+.behavior-railrow__flow {
+  min-width: 0;
+}
+
+.behavior-railrow__spine {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  color: hsl(45, 80%, 62%);
+  font-weight: 700;
+}
+
+.behavior-railrow__spine::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--border-subtle);
+}
+
+.behavior-railrow__spine--mesh::before {
+  background: hsla(45, 80%, 55%, 0.45);
+}
+
+.behavior-railhold,
+.behavior-railidle {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  font-size: 0.68rem;
+  color: var(--text-tertiary);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.behavior-railhold--wait {
+  border-color: hsla(200, 80%, 55%, 0.45);
+  color: hsla(200, 80%, 65%, 0.9);
+}
+
+.behavior-railmesh {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  height: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  background: hsla(280, 70%, 60%, 0.08);
+  border: 1px solid hsla(280, 70%, 60%, 0.28);
+  border-radius: var(--radius-sm);
+}
+
+.behavior-railmesh__kind {
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  color: var(--text-tertiary);
+}
+
+.behavior-railmesh__label {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: hsl(280, 60%, 72%);
+}
+
+.behavior-railnote {
+  grid-column: 1 / -1;
+  font-size: 0.66rem;
+  color: var(--text-tertiary);
+  padding: 4px 2px 2px;
+}
+
+/* 두 축 안에서는 옛 세로 들여쓰기를 쓰지 않습니다 */
+.behavior-railrow .behavior-wait {
+  margin-left: 0;
+  padding-left: 12px;
+}
+
+.behavior-hookzone > .behavior-railrow,
+.behavior-hookzone > .behavior-railnote {
+  margin-left: 0;
+}
+
+@media (max-width: 640px) {
+  .behavior-rails__head {
+    display: none;
+  }
+  .behavior-railrow {
+    grid-template-columns: 1fr;
+    row-gap: 4px;
+  }
+  .behavior-railrow__spine {
+    display: none;
+  }
+  /* 한 줄로 접혀도 "화면 유지" · "흐름 대기" 는 남깁니다. */
+}
+
 /* --- 세로 스텝 --- */
 .behavior-flow__label {
   font-size: 0.68rem;
@@ -1459,7 +1615,7 @@ body {
   display: flex;
   flex-direction: column;
   margin: 2px 0;
-  padding: 9px 10px 10px;
+  padding: 9px 0 10px;
   border: 1px dashed hsla(175, 65%, 45%, 0.4);
   border-left: 3px solid hsl(175, 65%, 45%);
   border-radius: var(--radius-sm);
@@ -1472,6 +1628,7 @@ body {
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 9px;
+  padding: 0 10px;
 }
 
 .behavior-hookzone__head.is-clickable {
@@ -1510,6 +1667,7 @@ body {
 .behavior-timing__title {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   font-size: 0.82rem;
   font-weight: 600;
@@ -1533,6 +1691,39 @@ body {
   border-radius: 10px;
   color: hsl(28, 90%, 62%);
   background: hsla(28, 90%, 55%, 0.14);
+}
+
+.behavior-timing > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.behavior-timing > summary::-webkit-details-marker {
+  display: none;
+}
+
+.behavior-timing > summary::before {
+  content: '';
+  display: inline-block;
+  width: 0.42em;
+  height: 0.42em;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  opacity: 0.55;
+  flex-shrink: 0;
+}
+
+.behavior-timing[open] > summary::before {
+  transform: rotate(45deg);
+  margin-top: -2px;
+}
+
+.inspect-verdict {
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--text-primary);
+  margin: 0 0 8px;
 }
 
 .timing-track {
@@ -1907,6 +2098,14 @@ body {
 [data-theme="light"] .behavior-chip.active {
   background: hsl(280, 60%, 50%);
 }
+
+[data-theme="light"] .behavior-railmesh__label {
+  color: hsl(280, 60%, 42%);
+}
+
+[data-theme="light"] .behavior-rails__key--screen { color: hsl(280, 55%, 42%); }
+[data-theme="light"] .behavior-rails__key--flow { color: hsl(160, 50%, 32%); }
+[data-theme="light"] .behavior-rails__key--mesh { color: hsl(45, 80%, 38%); }
 
 /* Prism token overrides for light theme */
 [data-theme="light"] .token.comment { color: hsl(120, 30%, 45%); }

@@ -72,6 +72,14 @@ try {
           (s.querySelector('.behavior-step__label')?.textContent || '').replace(/\s+/g, ' ').trim())
     log(`  event ${i + 1}: ` + steps.join('  →  '))
   })
+  log('rails: ' + be.querySelectorAll('.behavior-rails__head').length +
+    ' / 화면 유지: ' + be.querySelectorAll('.behavior-railhold').length +
+    ' / 흐름 대기: ' + [...be.querySelectorAll('.behavior-railidle')].filter(el => el.textContent.trim() === '흐름 대기').length +
+    ' / 맞물림: ' + be.querySelectorAll('.behavior-railrow--mesh').length)
+  const waitRow = [...be.querySelectorAll('.behavior-railrow')].find(r => r.querySelector('.behavior-wait'))
+  log('wait 왼쪽: ' + (waitRow?.querySelector('.behavior-railrow__screen')?.textContent.replace(/\s+/g, ' ').trim() || '없음'))
+  const screenRow = be.querySelector('.behavior-railrow--screen')
+  log('screen 오른쪽: ' + (screenRow?.querySelector('.behavior-railrow__flow')?.textContent.replace(/\s+/g, ' ').trim() || '없음'))
   // 연쇄의 관문 — 번호를 먹지 않고(↩), 설명은 알약 안에만(화살표에 중복 금지)
   const gateRow = [...be.querySelectorAll('.behavior-detail .behavior-step--gate')][0]
   if (gateRow) {
@@ -87,7 +95,7 @@ try {
   } else {
     log('연쇄 관문: 없음 (있어야 함!)')
   }
-  // ⏱ 타이밍 · deps 점검 — 트랙 머리말/경고가 실제로 그려지는지 봅니다
+  // ⏱ 타이밍 — 트랙 머리말/한 줄 결론/경고가 실제로 그려지는지 봅니다
   const staleCode = `import { useState, useEffect } from 'react'
 
 export default function Ticker({ userId }) {
@@ -108,13 +116,15 @@ export default function Ticker({ userId }) {
   const tracks = [...be2.querySelectorAll('.timing-track')]
   log('timing tracks: ' + tracks.length)
   log('timing title: ' + (be2.querySelector('.behavior-timing__title')?.textContent || '').replace(/\s+/g, ' ').trim())
+  log('timing 펼침: ' + (be2.querySelector('.behavior-timing')?.open ? '열림' : '접힘') + ' (위험/목록 없으면 접힘이어야 함 — 이 예제는 열려야 함)')
   tracks.forEach((t, i) => {
     const when = t.querySelector('.timing-track__when')?.textContent || ''
-    const chip = t.querySelector('.timing-track__stale')?.textContent || '(빠짐 없음)'
+    const chip = t.querySelector('.timing-track__stale')?.textContent || '(목록에 다 있음)'
+    const verdict = t.querySelector('.inspect-verdict')?.textContent || '(결론 없음)'
     const warns = [...t.querySelectorAll('.timing-warn__label')].map(w => w.textContent).join(' / ')
-    log(`  track ${i + 1}: ${when} | ${chip} | ${warns || '(경고 없음)'}`)
+    log(`  track ${i + 1}: ${when} | ${chip} | ${verdict} | ${warns || '(경고 없음)'}`)
   })
-  // 🔗 Effect 사이 관계 — 연쇄/루프/경합 카드가 실제로 그려지는지 봅니다
+  // 🔗 Effect끼리 — 한 줄 결론/루프/덮어쓰기 카드가 실제로 그려지는지 봅니다
   const raceCode = `import { useState, useEffect } from 'react'
 
 export default function Board({ query }) {
@@ -139,6 +149,7 @@ export default function Board({ query }) {
   const be3 = renderBehaviorView(parseBehavior(raceCode), () => {})
   document.body.appendChild(be3)
   log('interplay title: ' + (be3.querySelector('.behavior-interplay .behavior-timing__title')?.textContent || '').replace(/\s+/g, ' ').trim())
+  log('interplay 펼침: ' + (be3.querySelector('.behavior-interplay')?.open ? '열림' : '접힘') + ' (루프/위험이 있으면 열려야 함)')
   const cards = [...be3.querySelectorAll('.interplay-card')]
   log('interplay cards: ' + cards.length)
   cards.forEach((c, i) => {
@@ -341,7 +352,7 @@ export default function Panel() {
         return label + (hint ? ` (${hint.textContent.replace(/\s+/g, ' ').trim()})` : '')
       }).join(' → '))
     // 구역 밖(컴포넌트)에 남은 스텝 — 이벤트로 시작해 리렌더로 끝나야 합니다
-    const outside = [...be6.querySelectorAll('.behavior-detail .behavior-flow > .behavior-step')]
+    const outside = [...be6.querySelectorAll('.behavior-detail .behavior-flow > .behavior-railrow .behavior-step')]
       .map(s => (s.querySelector('.behavior-step__label')?.textContent || '').replace(/\s+/g, ' ').trim())
     log(`  hook event ${i + 1}: 구역 ${zones.length}개`)
     head.forEach((h, k) => log(`      [${h}]  ${inside[k]}`))

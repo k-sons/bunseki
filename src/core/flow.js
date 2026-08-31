@@ -4,6 +4,8 @@
  * 파서의 relations 데이터를 받아 트리 형태의 플로우 다이어그램을 생성합니다.
  */
 
+import { escapeHtml } from './escape.js'
+
 /**
  * 플로우 뷰를 렌더합니다.
  * @param {import('./parser').ParseResult} analysis
@@ -162,7 +164,7 @@ function createFlowNode(fn, analysis, onNavigate) {
   let hookBadges = ''
   if (fn.hooks && fn.hooks.length > 0) {
     hookBadges = fn.hooks.map(h => 
-      `<span class="hl-badge hl-badge--hook-${h.category || 'other'}" style="font-size:0.58rem; margin-left:2px">${h.name}</span>`
+      `<span class="hl-badge hl-badge--hook-${h.category || 'other'}" style="font-size:0.58rem; margin-left:2px">${escapeHtml(h.name)}</span>`
     ).join('')
   }
 
@@ -173,7 +175,7 @@ function createFlowNode(fn, analysis, onNavigate) {
 
   node.innerHTML = `
     <span class="flow-node__type" style="background:${typeColor}; color:white">${typeLabel}</span>
-    <span class="flow-node__name">${fn.name}</span>
+    <span class="flow-node__name">${escapeHtml(fn.name)}</span>
     <span style="font-size:0.68rem; color:var(--text-tertiary)">${lineRange} (${fn.lineCount}줄)</span>
     ${asyncBadge}
     ${hookBadges}

@@ -5,7 +5,7 @@
  * 각 항목 클릭 시 하이라이트 뷰에서 해당 코드로 스크롤합니다.
  */
 
-import { scrollToLine } from '../core/highlighter.js'
+import { escapeHtml } from '../core/escape.js'
 
 /**
  * 구조맵 뷰를 렌더합니다.
@@ -129,12 +129,14 @@ function createSection(title, items, onNavigate) {
     el.className = 'structure-item'
     el.title = `${item.name} — ${item.lines}`
 
+    // badges 는 이 파일이 직접 만든 HTML 이라 그대로 넣습니다.
+    // 나머지는 붙여넣은 코드에서 온 문자열이므로 전부 이스케이프합니다.
     el.innerHTML = `
       <div class="structure-item__icon structure-item__icon--${item.icon}">${item.iconLabel}</div>
-      <span class="structure-item__name">${item.name}</span>
+      <span class="structure-item__name">${escapeHtml(item.name)}</span>
       ${item.badges || ''}
-      <span class="structure-item__meta">${item.meta}</span>
-      <span class="structure-item__lines">${item.lines}</span>
+      <span class="structure-item__meta">${escapeHtml(item.meta)}</span>
+      <span class="structure-item__lines">${escapeHtml(item.lines)}</span>
     `
 
     el.addEventListener('click', () => {
@@ -168,13 +170,16 @@ function formatBadges(fn) {
   let badges = ''
   
   // Complexity Warnings
+  // hooks 는 배지용이라 이름 기준 중복 제거된 목록입니다 — 덩치 판정에 쓰면
+  // useState 를 마흔 번 부른 컴포넌트도 1 로 세어 그냥 지나갑니다.
+  const hookCalls = fn.hookCallCount ?? (fn.hooks ? fn.hooks.length : 0)
   const isTooLong = fn.lineCount > 100
-  const hasTooManyHooks = fn.hooks && fn.hooks.length > 5
-  
+  const hasTooManyHooks = hookCalls > 5
+
   if (isTooLong || hasTooManyHooks) {
-    const reason = isTooLong && hasTooManyHooks ? 'Too long & many hooks' 
-                 : isTooLong ? 'Too long (>100 lines)' 
-                 : 'Too many hooks (>5)'
+    const reason = isTooLong && hasTooManyHooks ? `Too long & many hooks (${hookCalls})`
+                 : isTooLong ? 'Too long (>100 lines)'
+                 : `Too many hooks (${hookCalls} > 5)`
     badges += `<span class="hl-badge" style="background:hsla(0,80%,55%,0.15); color:hsl(0,80%,60%)" title="Refactoring Recommended: ${reason}">🚨 Refactor</span>`
   }
 
@@ -184,7 +189,7 @@ function formatBadges(fn) {
 
   if (fn.hooks && fn.hooks.length > 0) {
     badges += fn.hooks.slice(0, 2).map(h =>
-      `<span class="hl-badge hl-badge--hook-${h.category || 'other'}" style="font-size:0.58rem">${h.name}</span>`
+      `<span class="hl-badge hl-badge--hook-${h.category || 'other'}" style="font-size:0.58rem">${escapeHtml(h.name)}</span>`
     ).join('')
     if (fn.hooks.length > 2) {
       badges += `<span class="hl-badge" style="font-size:0.58rem">+${fn.hooks.length - 2}</span>`

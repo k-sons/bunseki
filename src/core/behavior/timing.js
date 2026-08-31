@@ -511,7 +511,7 @@ function buildTimeline({ effect, isAsync, asyncKind, immediate, deferred, hasCle
   const steps = []
   const triggerLabel = effect.trigger === 'mount' ? '마운트 시 1회'
     : effect.trigger === 'every-render' ? '매 렌더마다'
-    : `deps [${(effect.deps || []).join(', ')}] 변경 시`
+    : `의존 목록 [${(effect.deps || []).join(', ')}] 변경 시`
 
   steps.push({ kind: 'trigger', label: triggerLabel })
   steps.push({ kind: 'effect', label: `${effect.hook} 실행`, line: effect.line })
@@ -562,7 +562,7 @@ function buildTimeline({ effect, isAsync, asyncKind, immediate, deferred, hasCle
   }
 
   if (hasCleanup) {
-    steps.push({ kind: 'cleanup', label: '정리(cleanup) 실행', note: 'deps 변경·언마운트 시' })
+    steps.push({ kind: 'cleanup', label: '정리(cleanup) 실행', note: '의존 목록 변경·언마운트 시' })
   }
 
   if (risk === 'unmount-setstate') {
@@ -579,10 +579,10 @@ function buildTimeline({ effect, isAsync, asyncKind, immediate, deferred, hasCle
     steps.push({
       kind: 'stale',
       names: staleDeps.map(d => d.name),
-      label: `deps 에 빠진 값: ${names}`,
+      label: `목록에 없는 값: ${names}`,
       note: late
-        ? `effect 는 만들어질 때의 값을 붙잡아 둡니다. ${names} 가 deps 에 없으니, 응답이 온 뒤에도 처음 값 그대로를 씁니다.`
-        : `effect 는 만들어질 때의 값을 붙잡아 둡니다. ${names} 가 바뀌어도 이 effect 는 다시 실행되지 않고, 안에서는 처음 값 그대로입니다.`,
+        ? `effect 는 만들어질 때의 값을 붙잡아 둡니다. ${names} 가 의존 목록(deps)에 없으니, 응답이 온 뒤에도 처음 값 그대로를 씁니다.`
+        : `effect 는 만들어질 때의 값을 붙잡아 둡니다. ${names} 가 의존 목록(deps)에 없으니, 바뀌어도 이 effect 는 다시 실행되지 않고, 안에서는 처음 값 그대로입니다.`,
     })
   }
 

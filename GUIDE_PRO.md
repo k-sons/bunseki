@@ -79,15 +79,18 @@ AST 에서 **선언과 위치**를 뽑아 `ParseResult` 로 내놓습니다.
 | `timing.js` | 비동기 타이밍·언마운트 위험·참조 수집·대기 무게·관문 판정 |
 | `deps.js` | deps 에서 빠진 값 (stale closure) |
 | `interplay.js` | Effect 사이 관계 — 무한 루프 / 경합 / 연쇄 |
+| `rails.js` | 기존 연쇄 스텝을 화면 / 동작 흐름 / 맞물림으로 갈라 놓기 (새 분석 없음) |
 
 **번들 전략**: `@babel/parser` 는 두 분석기 **양쪽에서만** import 되고 `main.js` 는 둘 다
 **동적 `import()`** 로 부릅니다. 그래서 babel 이 초기 번들에서 빠지고 공용 `lib` 청크로 분리됩니다.
 
 ```
-dist/assets/index-*.js       60.12 kB │ gzip: 20.13 kB   ← 초기 로딩 (파서 미포함)
-dist/assets/parser-*.js       9.69 kB │ gzip:  3.37 kB   ← 구조 분석기
-dist/assets/behavior-*.js    31.44 kB │ gzip: 10.65 kB   ← 동작 분석기
-dist/assets/lib-*.js        300.55 kB │ gzip: 78.94 kB   ← @babel/parser (첫 분석 시)
+dist/assets/index-*.js        61.17 kB │ gzip: 20.57 kB   ← 초기 로딩 (파서 미포함)
+dist/assets/parser-*.js       10.29 kB │ gzip:  3.52 kB   ← 구조 분석기
+dist/assets/behavior-*.js     31.58 kB │ gzip: 10.68 kB   ← 동작 분석기
+dist/assets/behavior-*.js     17.60 kB │ gzip:  4.92 kB   ← 동작 분석기(분할 청크)
+dist/assets/parse-error-*.js   0.56 kB │ gzip:  0.41 kB   ← 공용 오류 번역 (양쪽 파서가 공유)
+dist/assets/lib-*.js         300.55 kB │ gzip: 78.94 kB   ← @babel/parser (첫 분석 시)
 ```
 
 `vite.config.js` 는 **`@babel/parser` 만** `lib` 으로 모읍니다.
@@ -191,9 +194,12 @@ Prism.js 구문 강조 위에 섹션 컬러밴드와 인라인 배지를 주입�
 
 **UI 구성** — 이 탭은 **세 덩어리**입니다.
 
-1. **이벤트 연쇄** — 상단에 핸들러 칩(`<button onClick> L13`), 고르면 아래에 번호 매긴 세로 스텝
-2. **⏱ 타이밍 · deps 점검** — 가로 타임라인 (비동기이거나 deps 가 빠진 Effect 만)
-3. **🔗 Effect 사이 관계** — 무한 루프 / 경합 / 연쇄 카드
+1. **이벤트 연쇄** — 상단에 핸들러 칩(`<button onClick> L13`), 고르면 아래에
+   **화면(React)** 과 **동작 흐름** 두 축. 같은 스텝 배열을 갈라 놓은 것이며
+   새 분석이 아닙니다. `setter` 는 맞물림(`mesh`), `wait`/`call`/`effect` 는 흐름,
+   `event`/`rerender` 는 화면. 흐름만 움직일 때 화면 칸에는 "화면 유지".
+2. **이 Effect는 언제·무엇을 보나?** — 가로 타임라인 (비동기이거나 목록에 값이 빠진 Effect 만). 위험·빠진 값이 있을 때만 기본으로 펼칩니다.
+3. **Effect끼리 서로 건드리나?** — 무한 루프 / 누가 마지막에 쓰나 / 이어서 실행 카드. 루프·위험이 있을 때만 기본으로 펼칩니다.
 
 **연쇄 스텝 종류**
 
@@ -633,12 +639,12 @@ useEffect(() => {
 
 | 층 | 무엇을 보나 | 실행 |
 | :--- | :--- | :--- |
-| 단위 테스트 (142개) | 엔진이 내놓는 **데이터** | `npm test` (Node 내장 러너, 의존성 0) |
+| 단위 테스트 (157개) | 엔진이 내놓는 **데이터** | `npm test` (Node 내장 러너, 의존성 0) |
 | 브라우저 렌더 확인 | 렌더러가 **그리는 결과** — 라벨 HTML 주입 0, 가로 넘침 0 | `test/browser-verify.html` |
 | 실제 앱 확인 | 조립된 **앱이 실제로 도는가** | [`VERIFICATION.md`](./VERIFICATION.md) |
 
-**테스트 구성**: `parser` 10 · `behavior` 29 · `examples` 3 · `timing` 51 ·
-`stale-deps` 12 · `interplay` 19 · `hook-boundary` 18.
+**테스트 구성**: `parser` 15 · `behavior` 29 · `examples` 3 · `timing` 51 ·
+`stale-deps` 12 · `interplay` 19 · `hook-boundary` 18 · `rails` 8 · `escape` 2.
 
 **핵심 규약** — 판정 규칙을 넓힐 때는 각 테스트 파일의 **"잡으면 안 되는 것"** 절을
 먼저 확인합니다. 이 도구의 가치는 잡는 개수가 아니라 **틀리게 말하지 않는 것**에 있습니다.
@@ -649,6 +655,13 @@ useEffect(() => {
 
 ### 보안 관련 규약
 
-`ui/behavior.js` 에서 `innerHTML` 에 **코드에서 온 문자열**을 넣을 때는 반드시 `esc()` 를
-거칩니다. 안 그러면 `<button onClick>` 같은 라벨이 **진짜 엘리먼트로 렌더**됩니다
-(실제로 발생했던 버그). 브라우저 확인에 **라벨 HTML 주입 0건** 항목이 있는 이유입니다.
+`innerHTML` 에 **코드에서 온 문자열**을 넣을 때는 반드시 `escapeHtml()` 을 거칩니다.
+안 그러면 `<button onClick>` 같은 라벨이 **진짜 엘리먼트로 렌더**됩니다(실제로 발생했던 버그).
+브라우저 확인에 **라벨 HTML 주입 0건** 항목이 있는 이유입니다.
+
+이 함수는 **`src/core/escape.js` 한 곳**에 있고, `&<>"'` 를 모두 엔티티로 바꿔
+`title="…"` 같은 **속성 자리에서도** 안전합니다(`textContent` 방식은 따옴표를 막지 못해
+속성 밖으로 샐 수 있습니다). 렌더러 전체 — `highlighter.js` · `metrics.js` · `flow.js` ·
+`ui/structure.js` · `ui/behavior.js` · `main.js` — 가 이 하나를 함께 씁니다
+(`ui/behavior.js` 는 `esc` 라는 짧은 별칭으로 부릅니다). `test/escape.test.mjs` 가
+동작을 고정합니다.

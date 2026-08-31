@@ -99,6 +99,7 @@ export function parseCode(code) {
   for (const fn of functions) {
     const skip = (n) => n !== fn._node && componentNodes.has(n)
     fn.hooks = collectHooksInScope(fn._node, skip)
+    fn.hookCallCount = countHookCallsInScope(fn._node, skip)
     fn.handlers = collectHandlersInScope(fn._node, skip)
     const asyncKeywords = collectAsyncKeywords(fn._node, skip)
     fn.asyncKeywords = asyncKeywords
@@ -112,6 +113,8 @@ export function parseCode(code) {
   const comments = collectComments(ast)
   const exports = collectExports(ast, lines)
   const rnPatterns = collectRNPatterns(ast)
+  const handlerMarks = collectHandlerMarks(ast)
+  const asyncMarks = collectAsyncMarks(ast)
   const relations = buildRelations(functions, componentNodes)
   const sections = buildSectionMap(lines, imports, functions, constants, exports)
 
@@ -130,6 +133,8 @@ export function parseCode(code) {
     comments,
     exports,
     rnPatterns,
+    handlerMarks,
+    asyncMarks,
     sections,
     relations,
     totalLines,
@@ -141,6 +146,7 @@ function emptyResult(totalLines, error = null) {
   return {
     imports: [], functions: [], constants: [], hooks: [],
     jsxComponents: [], comments: [], exports: [], rnPatterns: [],
+    handlerMarks: [], asyncMarks: [],
     sections: new Array(totalLines).fill(null),
     relations: [], totalLines, error,
   }
@@ -240,6 +246,7 @@ function collectFunctions(ast, exportedNames) {
       endLine: end,
       lineCount: (start != null && end != null) ? (end - start + 1) : 1,
       hooks: [],
+      hookCallCount: 0,
       handlers: [],
       asyncKeywords: [],
       isExported: exportedNames.default === name || exportedNames.named.has(name) || isDefault,
@@ -344,6 +351,19 @@ function collectHooksInScope(root, skip) {
     found.push({ name, category: categorizeHook(name) })
   }, skip)
   return found
+}
+
+/**
+ * 범위 안에서 **실제로 호출된 횟수**. `hooks` 는 배지용이라 이름 기준으로 중복을 없애므로
+ * `useState` 를 마흔 번 부른 컴포넌트도 거기서는 1 입니다. 덩치를 재려면 이 값을 봐야 합니다.
+ */
+function countHookCallsInScope(root, skip) {
+  let count = 0
+  walk(root, (n) => {
+    if (n.type !== 'CallExpression') return
+    if (isHookName(calleeName(n))) count++
+  }, skip)
+  return count
 }
 
 /** 범위 안 JSX 의 onXxx 이벤트 속성 이름들 (중복 제거) */
@@ -558,6 +578,40 @@ function collectRNPatterns(ast) {
       results.push({ type: 'Platform', line })
     } else if (obj.name === 'Dimensions' && prop.name === 'get') {
       results.push({ type: 'Dimensions', line })
+    }
+  })
+  return results
+}
+
+/* ===== 줄 번호가 붙은 표식 (하이라이트 배지용) ===== */
+
+/**
+ * 하이라이트 배지는 예전에 줄 원문을 정규식으로 다시 훑어 붙였습니다.
+ * 그래서 주석이나 문자열 안에 적힌 `onClick=` · `await` 에도 배지가 달렸습니다.
+ * AST 가 이미 아는 것을 다시 추측하지 않도록, 여기서 줄 번호와 함께 내보냅니다.
+ */
+
+/** JSX 의 onXxx 이벤트 속성 — {name, line} */
+function collectHandlerMarks(ast) {
+  const results = []
+  walk(ast.program, (n) => {
+    if (n.type !== 'JSXAttribute') return
+    if (!n.name || n.name.type !== 'JSXIdentifier') return
+    if (!/^on[A-Z]/.test(n.name.name)) return
+    results.push({ name: n.name.name, line: lineOf(n) })
+  })
+  return results
+}
+
+/** async 선언과 await 식이 적힌 자리 — {keyword, line} */
+function collectAsyncMarks(ast) {
+  const results = []
+  walk(ast.program, (n) => {
+    if (n.async === true && (isFunctionNode(n) || n.type === 'ObjectMethod' || n.type === 'ClassMethod')) {
+      results.push({ keyword: 'async', line: lineOf(n) })
+    }
+    if (n.type === 'AwaitExpression') {
+      results.push({ keyword: 'await', line: lineOf(n) })
     }
   })
   return results

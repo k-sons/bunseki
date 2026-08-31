@@ -87,6 +87,7 @@ test('God Component — 큰 줄 수와 hook 총량을 정확히 센다', () => {
   assert.equal(d.lineCount, 43)            // 예전 엔진은 1
   assert.equal(r.hooks.length, 40)         // 전체 hook 호출 목록
   assert.equal(d.hooks.length, 1)          // 배지는 이름 기준 중복 제거(useState 1종)
+  assert.equal(d.hookCallCount, 40)        // 덩치 판정은 실제 호출 수 — 1 로 세면 God 를 놓침
 })
 
 test('섹션 맵 — 컴포넌트 본문 전체가 component 로 칠해진다', () => {
@@ -119,7 +120,8 @@ export default function App({ a }) {
   return <div onClick={() => setX(1)} />
 }`)
   for (const key of ['imports', 'functions', 'constants', 'hooks', 'jsxComponents',
-    'comments', 'exports', 'rnPatterns', 'sections', 'relations', 'totalLines']) {
+    'comments', 'exports', 'rnPatterns', 'handlerMarks', 'asyncMarks',
+    'sections', 'relations', 'totalLines']) {
     assert.ok(key in r, `결과에 ${key} 가 있어야 한다`)
   }
   const app = byName(r, 'App')
@@ -179,4 +181,17 @@ test('두 분석기가 같은 문장으로 실패를 알린다', async () => {
   const b = parseBehavior(broken)
   assert.ok(a.error && b.error)
   assert.equal(a.error.message, b.error.message, '한 곳에서 만든 문장을 함께 쓴다')
+})
+
+test('주석·문자열 속 useState / onClick 은 배지 근거가 되지 않는다', () => {
+  const r = parseCode(`function App() {
+  // useState(0) onClick={foo}
+  const hint = 'useEffect('
+  const [x, setX] = useState(0)
+  return <div onClick={() => setX(1)} />
+}`)
+  assert.equal(r.hooks.length, 1)
+  assert.equal(r.hooks[0].name, 'useState')
+  assert.equal(r.handlerMarks.length, 1)
+  assert.equal(r.handlerMarks[0].name, 'onClick')
 })

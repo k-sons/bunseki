@@ -1,9 +1,13 @@
 /**
  * Behavior View — 동작 연쇄 렌더러
  *
- * 상단에서 이벤트를 고르면, 그 이벤트가 일으키는 연쇄를 세로 스텝으로 보여줍니다.
+ * 상단에서 이벤트를 고르면, 그 이벤트가 일으키는 연쇄를
+ * 화면(React) / 동작 흐름 두 축으로 나란히 보여줍니다.
  * 스텝을 클릭하면 하이라이트 탭의 해당 코드로 이동합니다.
  */
+
+import { escapeHtml } from '../core/escape.js'
+import { toRailRows, meshCaption, idleCaption } from '../core/behavior/rails.js'
 
 /** 스텝 종류별 표시 이름 */
 const STEP_KIND_LABEL = {
@@ -22,7 +26,7 @@ const STEP_KIND_LABEL = {
  * 그러지 않으면 `<button onClick>` 같은 라벨이 innerHTML 에서 진짜 엘리먼트로
  * 렌더돼 스텝이 깨집니다(그리고 남의 코드를 이 페이지에 심는 통로가 됩니다).
  */
-const esc = (v) => escapeHtml(String(v ?? ''))
+const esc = escapeHtml
 
 /**
  * @param {import('../core/behavior/index.js').BehaviorResult} result
@@ -141,6 +145,8 @@ function appendAnalysisSections(container, components, onNavigate) {
  * 흐름 안에는 관문(gate)도 함께 그립니다 — 조건이 참이면 되돌아 나가는 자리라
  * 타임라인이 "언제나 끝까지 간다" 처럼 보이지 않게 합니다.
  * 짚을 것이 없는 동기 effect 는 흐름이 단순하므로 여기서는 생략합니다.
+ *
+ * 분석은 그대로입니다. 제목·한 줄 결론·접기만 바꿉니다.
  */
 function renderTimingSection(components, onNavigate) {
   const notable = components
@@ -152,17 +158,19 @@ function renderTimingSection(components, onNavigate) {
 
   if (notable.length === 0) return null
 
-  const section = document.createElement('div')
-  section.className = 'behavior-timing'
-
-  const title = document.createElement('div')
-  title.className = 'behavior-timing__title'
   const riskCount = notable.reduce((n, c) => n + c.effects.filter(e => e.risk).length, 0)
   const staleCount = notable.reduce((n, c) => n + c.effects.filter(e => staleNames(e).length > 0).length, 0)
+
+  const section = document.createElement('details')
+  section.className = 'behavior-timing'
+  section.open = riskCount > 0 || staleCount > 0
+
+  const title = document.createElement('summary')
+  title.className = 'behavior-timing__title'
   title.innerHTML = [
-    '⏱ 타이밍 · deps 점검',
+    '이 Effect는 언제·무엇을 보나?',
     riskCount ? `<span class="behavior-timing__riskcount">위험 ${riskCount}</span>` : '',
-    staleCount ? `<span class="behavior-timing__stalecount">deps 빠짐 ${staleCount}</span>` : '',
+    staleCount ? `<span class="behavior-timing__stalecount">목록에 없는 값 ${staleCount}</span>` : '',
   ].filter(Boolean).join(' ')
   section.appendChild(title)
 
@@ -191,6 +199,32 @@ function staleNames(effect) {
   return (effect.staleDeps || []).map(d => d.name)
 }
 
+function renderVerdict(text) {
+  const el = document.createElement('div')
+  el.className = 'inspect-verdict'
+  el.textContent = text
+  return el
+}
+
+function timingVerdict(effect) {
+  const stale = staleNames(effect)
+  const parts = []
+  if (effect.risk) parts.push('답이 오기 전에 화면이 사라지면, 없는 화면에 상태를 바꿉니다')
+  if (stale.length) parts.push(`[${stale.join(', ')}]가 의존 목록에 없어 옛 값을 볼 수 있습니다`)
+  if (parts.length === 0) parts.push('답을 기다리는 동안 화면은 그대로입니다')
+  return parts.join(' ')
+}
+
+function interplayVerdict(item) {
+  if (item.kind === 'loop') return '서로 바꿔서 화면이 멈추지 않을 수 있습니다'
+  if (item.kind === 'contention') {
+    return item.severity === 'risk'
+      ? '늦게 온 옛 답이 새 값을 덮을 수 있습니다'
+      : '같은 값을 여럿이 바꿔, 마지막만 화면에 남습니다'
+  }
+  return '하나가 바뀌면 다음 Effect가 이어서 실행됩니다'
+}
+
 function renderTimingTrack(effect, onNavigate) {
   const stale = staleNames(effect)
 
@@ -204,7 +238,7 @@ function renderTimingTrack(effect, onNavigate) {
   head.innerHTML = `
     <span class="timing-track__when">${esc(triggerStep ? triggerStep.label : effect.hook)}</span>
     ${effect.viaHook ? `<span class="hl-badge hl-badge--inhook">🪝 ${esc(effect.viaHook)} 안</span>` : ''}
-    ${stale.length ? `<span class="timing-track__stale">⚠ [${esc(stale.join(', '))}] 빠짐?</span>` : ''}
+    ${stale.length ? `<span class="timing-track__stale">⚠ [${esc(stale.join(', '))}] 의존 목록에 없음</span>` : ''}
     ${effect.hasCleanup ? '<span class="timing-track__flag">정리 있음</span>' : '<span class="timing-track__flag timing-track__flag--off">정리 없음</span>'}
     ${effect.line ? `<span class="timing-track__line">L${effect.line}</span>` : ''}
   `
@@ -213,6 +247,7 @@ function renderTimingTrack(effect, onNavigate) {
     head.addEventListener('click', () => onNavigate(effect.line))
   }
   track.appendChild(head)
+  track.appendChild(renderVerdict(timingVerdict(effect)))
 
   const flow = document.createElement('div')
   flow.className = 'timing-flow'
@@ -297,6 +332,8 @@ function renderTimingPill(step, onNavigate) {
  *   무한 루프 : deps 로 쓰는 상태를 스스로(혹은 서로) 되받아 멈추지 않음
  *   경합      : 같은 상태를 여러 Effect 가 바꿈 — 누가 마지막에 쓰나
  *   연쇄      : A 가 바꾼 상태를 B 가 deps 로 써서 이어서 실행됨
+ *
+ * 분석은 그대로입니다. 제목·한 줄 결론·접기만 바꿉니다.
  */
 function renderInterplaySection(components, onNavigate) {
   const notable = components
@@ -308,16 +345,18 @@ function renderInterplaySection(components, onNavigate) {
   const all = notable.flatMap(c => c.items)
   const loopCount = all.filter(i => i.kind === 'loop').length
   const raceCount = all.filter(i => i.kind === 'contention').length
+  const hot = all.some(i => i.severity === 'risk' || i.severity === 'warn' || i.kind === 'loop')
 
-  const section = document.createElement('div')
+  const section = document.createElement('details')
   section.className = 'behavior-timing behavior-interplay'
+  section.open = hot
 
-  const title = document.createElement('div')
+  const title = document.createElement('summary')
   title.className = 'behavior-timing__title'
   title.innerHTML = [
-    '🔗 Effect 사이 관계',
+    'Effect끼리 서로 건드리나?',
     loopCount ? `<span class="behavior-timing__riskcount">무한 루프 ${loopCount}</span>` : '',
-    raceCount ? `<span class="behavior-timing__stalecount">경합 ${raceCount}</span>` : '',
+    raceCount ? `<span class="behavior-timing__stalecount">누가 마지막에 쓰나 ${raceCount}</span>` : '',
   ].filter(Boolean).join(' ')
   section.appendChild(title)
 
@@ -333,11 +372,11 @@ function renderInterplaySection(components, onNavigate) {
   return section
 }
 
-/** 항목 종류별 표시 이름 */
+/** 항목 종류별 표시 이름 — 전문어 대신 한 줄로 읽히게 */
 const INTERPLAY_KIND_LABEL = {
   loop: '무한 루프',
-  contention: '경합',
-  cascade: '연쇄',
+  contention: '누가 마지막에 쓰나',
+  cascade: '이어서 실행',
 }
 
 function renderInterplayCard(item, onNavigate) {
@@ -348,7 +387,7 @@ function renderInterplayCard(item, onNavigate) {
   head.className = 'timing-track__head'
   head.innerHTML = `
     <span class="interplay-card__kind interplay-card__kind--${item.kind}">${INTERPLAY_KIND_LABEL[item.kind] || item.kind}</span>
-    <span class="interplay-card__label">${esc(item.label)}</span>
+    <span class="interplay-card__label">${esc(interplayVerdict(item))}</span>
     <span class="timing-track__line">${item.lines.map(l => `L${l}`).join(' · ')}</span>
   `
   card.appendChild(head)
@@ -405,10 +444,12 @@ function renderInterplayPill(step, onNavigate) {
   return pill
 }
 
-/** 선택된 이벤트의 연쇄 */
+/** 선택된 이벤트의 연쇄 — 화면(React) 과 동작 흐름을 같은 시간축에 나란히 */
 function renderEventDetail(comp, ev, onNavigate) {
   const wrap = document.createElement('div')
   wrap.className = 'behavior-flows'
+
+  if (ev.flows.length > 0) wrap.appendChild(renderRailsLegend())
 
   ev.flows.forEach((flow, i) => {
     if (ev.flows.length > 1) {
@@ -420,6 +461,7 @@ function renderEventDetail(comp, ev, onNavigate) {
 
     const flowEl = document.createElement('div')
     flowEl.className = 'behavior-flow stagger'
+    flowEl.appendChild(renderRailsHead())
 
     // 이어지는 같은 훅 스텝을 한 구역으로 묶습니다 — 흐름이 커스텀 훅 안으로
     // 들어갔다가 리렌더에서 다시 컴포넌트로 나오는 모습이 그대로 보이도록.
@@ -427,7 +469,8 @@ function renderEventDetail(comp, ev, onNavigate) {
     let zone = null
     let zoneHook = null
 
-    flow.steps.forEach((step, idx) => {
+    toRailRows(flow.steps).forEach((row, idx) => {
+      const step = row.step
       const hook = step.hook || null
       if (zoneHook && hook !== zoneHook) {
         zone = null
@@ -435,8 +478,12 @@ function renderEventDetail(comp, ev, onNavigate) {
       }
       const opening = hook && !zoneHook
 
-      // 구역으로 들어가는 화살표는 상자 바깥에 둡니다 — 밖에서 안으로 들어가는 모습
-      if (idx > 0) (opening ? flowEl : zone || flowEl).appendChild(renderConnector(step))
+      // Effect 이유로 적힌 말은 화살표가 아니라 행 위에 둡니다.
+      // 관문·경계 설명은 알약 안(hint)에만 — 두 번 나오면 안 됩니다.
+      if (idx > 0 && step.note && step.kind !== 'gate' && step.kind !== 'boundary') {
+        const noteHost = opening ? flowEl : zone || flowEl
+        noteHost.appendChild(renderRailNote(step.note))
+      }
 
       if (opening) {
         zone = renderHookZone(step, onNavigate)
@@ -446,10 +493,10 @@ function renderEventDetail(comp, ev, onNavigate) {
 
       const target = zone || flowEl
       if (step.kind === 'wait') {
-        target.appendChild(renderWaitStep(step))
+        target.appendChild(renderRailRow(row, null, onNavigate))
         return
       }
-      target.appendChild(renderStep(step, step.kind === 'gate' ? null : ++num, onNavigate))
+      target.appendChild(renderRailRow(row, step.kind === 'gate' ? null : ++num, onNavigate))
     })
 
     wrap.appendChild(flowEl)
@@ -462,6 +509,105 @@ function renderEventDetail(comp, ev, onNavigate) {
   }
 
   return wrap
+}
+
+function renderRailsLegend() {
+  const el = document.createElement('div')
+  el.className = 'behavior-rails__legend'
+  el.innerHTML = `
+    <span class="behavior-rails__key behavior-rails__key--screen">화면 · React</span>
+    <span class="behavior-rails__hint">눈에 보이는 변화</span>
+    <span class="behavior-rails__key behavior-rails__key--flow">동작 흐름</span>
+    <span class="behavior-rails__hint">뒤에서 흐르는 제어</span>
+    <span class="behavior-rails__key behavior-rails__key--mesh">↔ 맞물림</span>
+    <span class="behavior-rails__hint">상태가 바뀌어 두 축이 만남</span>
+  `
+  return el
+}
+
+function renderRailsHead() {
+  const el = document.createElement('div')
+  el.className = 'behavior-rails__head'
+  el.innerHTML = `
+    <span class="behavior-rails__col">화면 · React</span>
+    <span class="behavior-rails__gap" aria-hidden="true"></span>
+    <span class="behavior-rails__col">동작 흐름</span>
+  `
+  return el
+}
+
+function renderRailNote(note) {
+  const el = document.createElement('div')
+  el.className = 'behavior-railnote'
+  el.textContent = note
+  return el
+}
+
+/**
+ * 한 스텝을 두 칸 행으로 놓습니다.
+ * 실제 .behavior-step / .behavior-wait 는 한 번만 그려서 기존 셀렉터가 세지 않습니다.
+ */
+function renderRailRow(row, num, onNavigate) {
+  const { step, rail } = row
+  const el = document.createElement('div')
+  el.className = `behavior-railrow behavior-railrow--${rail}`
+  el.dataset.rail = rail
+
+  const screen = document.createElement('div')
+  screen.className = 'behavior-railrow__screen'
+  const spine = document.createElement('div')
+  spine.className = `behavior-railrow__spine behavior-railrow__spine--${rail}`
+  spine.setAttribute('aria-hidden', 'true')
+  const flow = document.createElement('div')
+  flow.className = 'behavior-railrow__flow'
+
+  const body = step.kind === 'wait'
+    ? renderWaitStep(step)
+    : renderStep(step, num, onNavigate)
+
+  if (rail === 'screen') {
+    screen.appendChild(body)
+    flow.appendChild(renderRailIdle(rail))
+  } else if (rail === 'flow') {
+    screen.appendChild(renderRailHold(step))
+    flow.appendChild(body)
+  } else {
+    screen.appendChild(renderMeshCaption(step))
+    spine.textContent = '↔'
+    flow.appendChild(body)
+  }
+
+  el.appendChild(screen)
+  el.appendChild(spine)
+  el.appendChild(flow)
+  return el
+}
+
+function renderRailHold(step) {
+  const el = document.createElement('div')
+  el.className = 'behavior-railhold'
+  el.textContent = idleCaption('flow')
+  el.title = '이 동안 화면은 아직 이전 그대로입니다'
+  if (step.kind === 'wait') el.classList.add('behavior-railhold--wait')
+  return el
+}
+
+function renderMeshCaption(step) {
+  const el = document.createElement('div')
+  el.className = 'behavior-railmesh'
+  el.innerHTML = `
+    <span class="behavior-railmesh__kind">화면</span>
+    <span class="behavior-railmesh__label">${esc(meshCaption(step) || '상태 변경')}</span>
+  `
+  return el
+}
+
+function renderRailIdle(rail) {
+  const el = document.createElement('div')
+  el.className = 'behavior-railidle'
+  el.textContent = idleCaption(rail)
+  el.title = '이 동안 동작 흐름은 화면 쪽 일만 합니다'
+  return el
 }
 
 /**
@@ -490,27 +636,6 @@ function renderHookZone(step, onNavigate) {
   box.appendChild(head)
 
   return box
-}
-
-/** 스텝 사이 화살표 — Effect 로 넘어갈 때는 이유를 함께 보여줍니다 */
-function renderConnector(nextStep) {
-  const conn = document.createElement('div')
-  conn.className = 'behavior-connector'
-
-  const arrow = document.createElement('span')
-  arrow.className = 'behavior-connector__arrow'
-  arrow.textContent = '↓'
-  conn.appendChild(arrow)
-
-  // 관문의 설명은 알약 안(hint)에 붙습니다 — 화살표에 또 적으면 두 번 나옵니다
-  if (nextStep.note && nextStep.kind !== 'gate') {
-    const note = document.createElement('span')
-    note.className = 'behavior-connector__note'
-    note.textContent = nextStep.note
-    conn.appendChild(note)
-  }
-
-  return conn
 }
 
 /**
@@ -665,10 +790,4 @@ function renderEmpty(title, hint) {
   el.className = 'placeholder-msg'
   el.innerHTML = `<p><strong>${title}</strong></p><span class="placeholder-shortcut">${hint}</span>`
   return el
-}
-
-function escapeHtml(text) {
-  const div = document.createElement('div')
-  div.textContent = text
-  return div.innerHTML
 }

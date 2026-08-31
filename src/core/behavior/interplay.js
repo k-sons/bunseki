@@ -191,7 +191,7 @@ function loopFinding(cycle, nodes) {
       kind: 'loop',
       severity: guarded ? 'warn' : 'risk',
       label: `L${first.line} 이 스스로를 다시 부릅니다 — 무한 루프 위험`,
-      note: `deps 의 '${state}' 를 이 Effect 가 직접 바꿉니다. 바뀌면 다시 실행되고, 또 바꾸고 — 멈출 지점이 없습니다.${guardNote}`,
+      note: `의존 목록에 있는 '${state}' 값을 이 Effect 가 직접 바꿉니다. 바뀌면 다시 실행되고, 또 바꾸고 — 멈출 지점이 없습니다.${guardNote}`,
       lines,
       steps,
     }
@@ -242,11 +242,11 @@ function everyRenderFindings(nodes) {
     out.push({
       kind: 'loop',
       severity: guarded ? 'warn' : 'risk',
-      label: `L${node.line} 은 deps 배열이 없어 매 렌더 실행됩니다 — 무한 루프 위험`,
-      note: `deps 배열이 없으면 렌더할 때마다 다시 실행됩니다. 그런데 이 Effect 는 ${states} 를 바꾸므로 다시 렌더되고, 그래서 또 실행됩니다.${loopGuardNote(guarded)}`,
+      label: `L${node.line} 은 의존 목록이 없어 매 렌더 실행됩니다 — 무한 루프 위험`,
+      note: `의존 목록이 없으면 렌더할 때마다 다시 실행됩니다. 그런데 이 Effect 는 ${states} 를 바꾸므로 다시 렌더되고, 그래서 또 실행됩니다.${loopGuardNote(guarded)}`,
       lines: [node.line],
       steps: [
-        { kind: 'effect', label: node.hook, detail: 'deps 배열 없음', line: node.line, hook: node.viaHook },
+        { kind: 'effect', label: node.hook, detail: '의존 목록 없음', line: node.line, hook: node.viaHook },
         ...direct.map(setterStep),
         { kind: 'loopback', label: `↺ 다시 L${node.line}`, line: node.line },
       ],
@@ -339,7 +339,7 @@ function cascadeFindings(nodes, edges) {
 
     const deferred = path.some(e => e.write.deferred)
     const detail = path
-      .map((e, idx) => `L${lines[idx]} 가 '${e.state}' 를 바꾸면 '${e.state}' 를 deps 로 쓰는 L${lines[idx + 1]} 이 이어서 실행됩니다`)
+      .map((e, idx) => `L${lines[idx]} 가 '${e.state}' 를 바꾸면 '${e.state}' 를 의존 목록에 둔 L${lines[idx + 1]} 이 이어서 실행됩니다`)
       .join('. ')
 
     return {
@@ -359,7 +359,7 @@ function effectStep(node, viaState) {
   return {
     kind: 'effect',
     label: viaState ? `${node.hook} 재실행` : node.hook,
-    detail: viaState ? `deps [${viaState}]` : `L${node.line}`,
+    detail: viaState ? `의존 목록 [${viaState}]` : `L${node.line}`,
     line: node.line,
     // 얽힌 Effect 가 컴포넌트가 아니라 커스텀 훅 안에 있으면
     // 그 훅 코드를 열어야 고칠 수 있으니, 어디 것인지 함께 답니다.

@@ -1,14 +1,17 @@
 # 🔄 Code Bunseki — 작업 인계문 (Handoff)
 
-> 갱신: 2026-08-24 · 새 세션에서 이어서 작업하기 위한 인수인계 문서.
+> 갱신: 2026-09-01 · 새 세션에서 이어서 작업하기 위한 인수인계 문서.
 > **이 문서 하나만 읽으면 현재 상태와 다음 할 일을 파악할 수 있게** 정리합니다.
+>
+> 지금 화면이 무엇을 보여 주는지 남에게 설명할 때는 **[CURRENT.md](./CURRENT.md)** 를 보세요.
+> 아래 ⏱/🔗 제목(`타이밍 · deps 점검`, `경합`)은 예전 화면 말입니다.
 
 ---
 
 ## 0. 새 세션이면 여기부터 (3분)
 
 1. `git log --oneline -5` — 맨 위가 **인계문 갱신**, 그 아래가 `parse-error` 커밋인지 확인.
-2. `npm test` — **146 pass / 0 fail** 이면 출발점이 맞음.
+2. `npm test` — **실패 0** 이면 출발점이 맞음.
 3. 이 문서 **3장(현재 상태)** 과 **6장(다음 할 일)** 만 보면 바로 이어서 작업 가능.
 4. 코드를 만지기 전, 손댈 파일이 4장 "계약" 3개 중 어디에 걸리는지 확인.
 
@@ -16,9 +19,10 @@
 > 무엇을 할지 **먼저 합의하고** 착수할 것.
 
 지금 ⚡ 동작 탭은 **세 덩어리**입니다 — 위에서부터
-**이벤트 연쇄**(칩 고르면 세로 스텝) · **⏱ 타이밍 · deps 점검**(가로 타임라인) ·
-**🔗 Effect 사이 관계**(루프/경합/연쇄 카드).
-상태·Effect 가 커스텀 훅 안에 있으면 세 곳 모두 **🪝 훅 표시**가 붙습니다
+**이벤트 연쇄**(칩 고르면 **화면 · React / 동작 흐름** 두 축) ·
+**이 Effect는 언제·무엇을 보나?**(가로 타임라인, 위험·목록에 없는 값이 있으면 펼침) ·
+**Effect끼리 서로 건드리나?**(무한 루프 / 누가 마지막에 쓰나 / 이어서 실행).
+화면 설명은 [CURRENT.md](./CURRENT.md). 상태·Effect 가 커스텀 훅 안에 있으면 세 곳 모두 **🪝 훅 표시**가 붙습니다
 (연쇄는 스텝을 상자로 묶는 **훅 구역**, 나머지 둘은 배지).
 
 ---
@@ -321,6 +325,15 @@
 - 테스트 4개 추가(`parser.test.mjs`) — 실패 시 `error` · 성공 시 `null` ·
   `sections` 길이 유지 · **두 분석기가 같은 문장**.
 
+### (19) 이벤트 연쇄 두 축 — 화면(React) / 동작 흐름
+- 한 줄 세로 스텝은 화면 갱신과 뒤의 제어가 **섞여** 톱니처럼 맞물리는 모습이 안 보였음.
+- **`behavior/rails.js`(신규)**: 기존 `steps` 를 갈라 놓기만 함. 엔진 계약은 그대로.
+  `event`/`rerender` → `screen`, `call`/`effect`/`wait`/`gate`/`boundary` → `flow`,
+  `setter` → `mesh`. 비동기는 흐름의 한 예일 뿐(`wait` 도 flow).
+- UI: 같은 시간축의 두 칸. 흐름만 움직일 때 화면 칸은 **"화면 유지"**.
+  `.behavior-step` / `.behavior-wait` 는 **한 번만** 그려 기존 셀렉터가 세지 않음.
+- **시간별 값 스냅샷(CCTV)은 넣지 않음.** 두 축으로도 이해가 안 풀릴 때만 검토.
+
 ---
 
 ## 3. 현재 상태 (스냅샷)
@@ -328,9 +341,9 @@
 - ✅ **작업트리 깨끗. 미커밋 없음.**
   (A 트랙 + B + E + C + D + D-2 + C-2 + F + C-3 + 라(다지기) + 다-1 + 다-2 +
   **문법 오류 표시** 완료).
-- ✅ `npm test` → **146 pass / 0 fail**
-  (parser 14 · behavior 29 · examples 3 · timing 51 · stale-deps 12 · interplay 19 ·
-  hook-boundary 18)
+- ✅ `npm test` → **157 pass / 0 fail**
+  (parser 15 · behavior 29 · examples 3 · timing 51 · stale-deps 12 · interplay 19 ·
+  hook-boundary 18 · rails 8 · escape 2)
 - ✅ `npx vite build` 정상. 초기 번들 60KB, `@babel/parser` 는 `lib` 청크(≈300KB)로 **지연 로드**
   (`dist/index.html` 에 `lib` 의 `modulepreload` 가 없음을 확인).
   ⚠️ **`vite.config.js` 의 `manualChunks` 는 `@babel` 만 `lib` 으로 모읍니다.**
@@ -382,6 +395,8 @@ src/
 ├── main.js                     # 앱 진입. analyze()가 파서를 동적 import → 4개 탭 렌더
 ├── core/
 │   ├── parser.js               # [AST] 4개 탭용. parseCode(code) → ParseResult (계약 유지!)
+│   ├── parse-error.js          # 두 파서 공용 오류 번역 (같은 문장으로 실패 알림)
+│   ├── escape.js               # escapeHtml() — 코드에서 온 문자열의 HTML 이스케이프 (렌더러 공용)
 │   ├── highlighter.js          # 🎨 (sections 소비)
 │   ├── metrics.js              # 📊 (functions/hooks 소비)
 │   ├── flow.js                 # 🔄 (relations 소비)
@@ -392,7 +407,8 @@ src/
 │       ├── hooks.js            # 같은 파일 커스텀 훅 추적 + 스코프 경계 + 안팎 이름 대응 + 돌려준 콜백
 │       ├── timing.js           # ⏱ 비동기 타이밍 + 언마운트 위험 + 참조 수집 + 대기 무게 + 관문
 │       ├── deps.js             # ⚠ deps 에서 빠진 값 = stale closure
-│       └── interplay.js        # 🔗 Effect 사이 관계 = 루프/경합/연쇄
+│       ├── interplay.js        # 🔗 Effect 사이 관계 = 루프/경합/연쇄
+│       └── rails.js            # 화면 / 동작 흐름 두 축 (기존 steps 를 갈라 놓기만)
 ├── ui/
 │   ├── structure.js            # 🗺️
 │   └── behavior.js             # ⚡ + 🪝 훅 구역 + ⏱ 타이밍/deps UI + 🔗 관계 UI
@@ -445,6 +461,10 @@ UI 는 `trigger·risk·stale` 을 뺀 나머지를 순서대로 알약으로 그
 의 `errorOnly`).
 `buildEvents(name, collected, scope, code)` — **네 번째 인자는 원본 소스**(관문 조건식용).
 
+**두 축(rails)** — `toRailRows(steps)` 가 `rail:'screen'|'flow'|'mesh'` 만 붙인다.
+스텝 배열을 **바꾸지 않는다**. UI 는 행마다 한 칸에만 `.behavior-step` 을 그린다.
+흐름만 움직이는 행의 화면 칸은 "화면 유지"(스텝이 아님).
+
 **핸들러도 Effect 와 같은 말을 한다** — `wait`·`gate`·`오류 시` 는 Effect 연쇄뿐 아니라
 **이벤트 핸들러 흐름에도** 붙습니다. 재료는 `resolveHandlerSetters` 가 함께 내보내는
 **`bodies`**(인라인 화살표 + 거쳐 가는 로컬 함수) → `describeHandlerAsync` ·
@@ -461,8 +481,11 @@ UI 는 **이어지는 같은 `hook` 스텝을 상자 하나로 묶는다** — �
 `setQuery()` 는 컴포넌트에서 부르지만 그 상태는 훅 것이라 구역 안에 놓인다.
 
 ### 🔒 UI 이스케이프 규칙
-`ui/behavior.js` 에서 `innerHTML` 에 **코드에서 온 문자열**을 넣을 땐 반드시 `esc()`.
+`innerHTML` 에 **코드에서 온 문자열**을 넣을 땐 반드시 `escapeHtml()`(`core/escape.js`).
 안 그러면 `<button onClick>` 같은 라벨이 진짜 엘리먼트로 렌더된다.
+`&<>"'` 를 모두 막아 **속성 자리에서도** 안전하다. 렌더러 전체(highlighter · metrics ·
+flow · ui/structure · ui/behavior · main)가 이 하나를 공유한다
+(`ui/behavior.js` 는 `esc` 별칭). `test/escape.test.mjs` 가 고정.
 
 ### 🔗 interplay 항목 (UI 계약)
 `{ kind:'loop'|'contention'|'cascade', severity:'risk'|'warn'|'info', label, note,
@@ -476,6 +499,7 @@ UI 는 `steps` 를 순서대로 알약으로 그리기만 한다.
 
 | 문서 | 무엇 |
 | :--- | :--- |
+| `CURRENT.md` | **지금 화면 설명용 스냅샷** — 남에게 말할 때 |
 | `GUIDE.md` | 가이드 색인 |
 | `GUIDE_BEGINNER.md` | **초보자용** — 사용법 · 각 표시 읽는 법 · 주의사항 8가지 |
 | `GUIDE_PRO.md` | 실무자용 |
@@ -511,10 +535,15 @@ A 트랙(1~4) · B · E · C · D · D-2 · C-2 · F · C-3 ·
 **라) 다지기** · **다-1) 핸들러 비동기** · **다-2) 핸들러 관문** ·
 **문법 오류 표시(잘린 코드의 "조용한 0" 제거)** 까지 완료·커밋됨.
 합의했던 (라)·(다)가 **둘 다 끝났습니다.** (가)·(나)는 중요도가 낮아 **버리기로 했습니다.**
+**(19) 두 축(화면 / 동작 흐름)** 도 들어갔습니다. 시간별 스냅샷은 **아직 안 함**.
 
 ### ▶ 다음: **아직 정하지 않음 — 먼저 합의할 것**
 
 이번 라운드에서 새로 드러난 것과, 남겨 둔 것들입니다.
+
+**(E) 시간별 값 스냅샷 — 큼, 보류**
+두 축으로도 "언제 값이 어떻게 바뀌지?" 가 안 풀릴 때만. 새 엔진이 필요해서
+지금 구조에 칸을 더하는 일이 아닙니다. **요청 오기 전엔 건드리지 말 것.**
 
 **(A) 핸들러의 "응답 뒤" 를 정보로 알려 줄 것인가 — 작음**
 (16)에서 **일부러 위험 배지를 안 달았습니다**. 대신 응답 뒤 setter 에
@@ -536,7 +565,7 @@ A 트랙(1~4) · B · E · C · D · D-2 · C-2 · F · C-3 ·
 접기·컴포넌트 고르기 같은 **탐색 수단**이 필요한지 실제로 써 보고 판단할 것.
 
 **추천**: **(C) → (D)**. (C)는 이미 있는 정보를 읽어 적는 일이라 위험이 낮고 바로 값이 되고,
-(D)는 그다음에 실제 사용감을 보고 정하면 됩니다. (A)·(B)는 **하지 않는 쪽에 근거가 있으니**
+(D)는 그다음에 실제 사용감을 보고 정하면 됩니다. (A)·(B)·**(E)** 는 **하지 않는 쪽에 근거가 있으니**
 누가 요청하기 전엔 건드리지 말 것.
 
 ---

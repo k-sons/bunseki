@@ -371,7 +371,7 @@ function appendEffectSteps({ steps, state, effects, setterToState, setterHook, s
     // 리렌더는 훅이 아니라 컴포넌트에서 일어납니다 — 여기서 훅 구역이 닫힙니다
     steps.push({ kind: 'rerender', label: '리렌더', line: null, hook: null, badges: [] })
     if (triggered.length === 0 && depth === 0) {
-      steps[steps.length - 1].detail = `'${state}' 를 deps 로 쓰는 Effect 는 없습니다`
+      steps[steps.length - 1].detail = `'${state}' 를 의존 목록에 둔 Effect 는 없습니다`
     }
     return
   }
@@ -389,7 +389,7 @@ function appendEffectSteps({ steps, state, effects, setterToState, setterHook, s
     steps.push({
       kind: 'effect',
       label: `${effect.hook} 재실행`,
-      note: `deps [${effect.deps.join(', ')}] 에 '${state}' 가 있어 다시 실행됩니다`,
+      note: `의존 목록 [${effect.deps.join(', ')}] 에 '${state}' 항목이 있어 다시 실행됩니다`,
       line: effect.line,
       hook: inHook,
       hookLine: inHookLine,
@@ -489,7 +489,7 @@ export function describeEffects(effects) {
     let when
     if (e.trigger === 'every-render') when = '매 렌더마다 실행'
     else if (e.trigger === 'mount') when = '마운트 시 1회만 실행'
-    else when = `deps [${e.deps.join(', ')}] 이 바뀔 때 실행`
+    else when = `의존 목록 [${e.deps.join(', ')}] 이 바뀔 때 실행`
 
     return {
       line: e.line,

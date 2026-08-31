@@ -14,6 +14,7 @@ import Prism from 'prismjs'
 import 'prismjs/components/prism-typescript'
 import 'prismjs/components/prism-jsx'
 import 'prismjs/components/prism-tsx'
+import { escapeHtml } from './escape.js'
 
 // 페이지 로드 시 Prism 이 DOM 을 자동으로 훑지 않도록 함 (하이라이팅은 수동 호출)
 Prism.manual = true
@@ -25,20 +26,6 @@ const SECTION_LABELS = {
   component: 'COMPONENT',
   export: 'EXPORT',
 }
-
-// Parser에서 함수 가져오기 (비동기로 모듈 로딩 시 import 지원 안 할 수 있으므로 임시로 자체 함수 구현)
-function categorizeHookLocal(name) {
-  if (['useState', 'useReducer'].includes(name)) return 'state'
-  if (['useEffect', 'useLayoutEffect', 'useInsertionEffect'].includes(name)) return 'effect'
-  if (['useMemo', 'useCallback', 'useDeferredValue', 'memo'].includes(name)) return 'memo'
-  if (['useSelector', 'useDispatch', 'useStore', 'dispatch', 'useContext'].includes(name)) return 'store'
-  return 'other'
-}
-
-// 제네릭 인자는 길이를 제한해 백트래킹 폭주를 막습니다 (useState<Foo>( 형태)
-const HOOK_PATTERN = /\b(use[A-Z]\w+|dispatch|memo)\s*(?:<[^<>]{0,120}>\s*)?\(/g
-const HANDLER_PATTERN = /\b(on[A-Z]\w+)\s*[=:{]/g
-const ASYNC_PATTERN = /\b(async|await)\b/g
 
 /**
  * 하이라이팅된 코드 뷰를 생성합니다.
@@ -63,6 +50,8 @@ export function renderHighlightView(code, analysis, language = 'jsx') {
 
   // Track which sections have already shown their label
   const shownSections = new Set()
+
+  const badgeIndex = buildBadgeIndex(analysis)
 
   lines.forEach((rawLine, idx) => {
     const lineEl = document.createElement('div')
@@ -91,9 +80,9 @@ export function renderHighlightView(code, analysis, language = 'jsx') {
     content.innerHTML = highlightedLines[idx] || ''
 
     // Add inline badges
-    const badges = generateBadges(rawLine, idx + 1, analysis)
-    if (badges.length > 0) {
-      badges.forEach(badge => content.appendChild(badge))
+    const badges = badgeIndex.get(idx + 1)
+    if (badges) {
+      badges.forEach(({ text, type }) => content.appendChild(createBadge(text, type)))
     }
 
     lineEl.appendChild(gutter)
@@ -197,46 +186,39 @@ function splitHighlightedLines(html) {
   return lines
 }
 
-function escapeHtml(text) {
-  const div = document.createElement('div')
-  div.textContent = text
-  return div.innerHTML
-}
-
 /**
- * 해당 라인에 표시할 인라인 배지를 생성합니다.
+ * 줄 번호 → 배지 목록.
+ *
+ * 예전에는 줄 원문을 정규식으로 다시 훑어 배지를 붙였습니다. 그래서 주석이나 문자열 안에
+ * 적힌 `useEffect(` · `await` 에도 배지가 달렸습니다 — 코드가 하지 않는 일을 한다고
+ * 말한 셈입니다. 파서가 AST 에서 이미 찾아 둔 자리만 씁니다.
+ *
+ * 파싱에 실패하면 이 목록들이 비어 배지도 사라집니다. 그게 맞습니다 —
+ * 못 읽은 코드에 대해 "여기 Hook 이 있다" 고 말할 근거가 없습니다.
+ *
+ * @param {import('./parser').ParseResult} analysis
+ * @returns {Map<number, {text: string, type: string}[]>}
  */
-function generateBadges(line, lineNum, analysis) {
-  const badges = []
+function buildBadgeIndex(analysis) {
+  const index = new Map()
+  const seen = new Set()
 
-  // Hook badge — 카테고리별로 색이 다르므로 categorizeHookLocal 로 분류합니다.
-  // 같은 줄에 동일 Hook 이 여러 번 나와도 배지는 하나만 답니다.
-  const hooks = [...new Set([...line.matchAll(HOOK_PATTERN)].map(m => m[1]))]
-  hooks.forEach(hook => {
-    badges.push(createBadge(hook, `hook-${categorizeHookLocal(hook)}`))
-  })
-
-  // Handler badge
-  const handlers = [...new Set([...line.matchAll(HANDLER_PATTERN)].map(m => m[1]))]
-  handlers.forEach(handler => {
-    badges.push(createBadge(handler, 'handler'))
-  })
-
-  // RN pattern badge
-  if (line.includes('StyleSheet.create')) {
-    badges.push(createBadge('StyleSheet', 'rn'))
-  }
-  if (line.match(/Animated\.\w+/)) {
-    badges.push(createBadge('Animated', 'rn'))
+  const add = (line, text, type) => {
+    if (!line) return
+    // 같은 줄에 같은 배지는 한 번만 (useState 를 한 줄에서 두 번 불러도 배지는 하나)
+    const key = `${line}|${type}|${text}`
+    if (seen.has(key)) return
+    seen.add(key)
+    if (!index.has(line)) index.set(line, [])
+    index.get(line).push({ text, type })
   }
 
-  // Async badge (for keywords in the line)
-  const keywords = [...new Set([...line.matchAll(ASYNC_PATTERN)].map(m => m[1]))]
-  keywords.forEach(kw => {
-    badges.push(createBadge(kw, 'async'))
-  })
+  for (const h of analysis.hooks || []) add(h.line, h.name, `hook-${h.category || 'other'}`)
+  for (const h of analysis.handlerMarks || []) add(h.line, h.name, 'handler')
+  for (const p of analysis.rnPatterns || []) add(p.line, p.type, 'rn')
+  for (const a of analysis.asyncMarks || []) add(a.line, a.keyword, 'async')
 
-  return badges
+  return index
 }
 
 /**

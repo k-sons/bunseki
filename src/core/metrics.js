@@ -2,6 +2,8 @@
  * Metrics — 코드 메트릭 계산 및 시각화 렌더러
  */
 
+import { escapeHtml } from './escape.js'
+
 /**
  * 분석 결과에서 메트릭을 계산합니다.
  * @param {import('./parser').ParseResult} analysis
@@ -115,8 +117,9 @@ export function renderMetricsView(metrics, onNavigate) {
         ? 'linear-gradient(90deg, hsl(280,70%,55%), hsl(280,70%,65%))'
         : 'linear-gradient(90deg, hsl(45,80%,50%), hsl(45,80%,60%))'
 
+      const safeName = escapeHtml(fn.name)
       bar.innerHTML = `
-        <span class="metrics-bar__label" title="${fn.name}">${fn.name} <small style="opacity:0.6; font-size:0.75rem;">(${lineRange})</small></span>
+        <span class="metrics-bar__label" title="${safeName}">${safeName} <small style="opacity:0.6; font-size:0.75rem;">(${lineRange})</small></span>
         <div class="metrics-bar__track">
           <div class="metrics-bar__fill" style="width:${pct}%; background:${color}">
             ${fn.lines}줄
@@ -159,7 +162,7 @@ export function renderMetricsView(metrics, onNavigate) {
         bar.title = `${name}: 총 ${details.count}회 사용 (감지 라인: ${lineList}) — 클릭 시 이동`
 
         bar.innerHTML = `
-          <span class="metrics-bar__label">${name}</span>
+          <span class="metrics-bar__label">${escapeHtml(name)}</span>
           <div class="metrics-bar__track" title="감지 위치: ${lineList}">
             <div class="metrics-bar__fill" style="width:${pct}%; background:linear-gradient(90deg, hsl(200,80%,50%), hsl(200,80%,60%))">
               ${details.count}회 (${lineList})

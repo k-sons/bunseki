@@ -207,7 +207,7 @@ test('deps 배열이 없는 Effect 가 상태를 바꾸면 무한 루프 위험'
   assert.ok(loop, '매 렌더 재실행 + 상태 변경 = 고리')
   assert.equal(loop.severity, 'risk')
   assert.deepEqual(loop.lines, [8])
-  assert.ok(loop.label.includes('deps 배열이 없어'))
+  assert.ok(loop.label.includes('의존 목록이 없어'))
   assert.equal(loop.steps[loop.steps.length - 1].kind, 'loopback')
 })
 

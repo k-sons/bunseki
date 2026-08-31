@@ -8,6 +8,7 @@ import { renderHighlightView, scrollToLine, highlightCode } from './core/highlig
 import { calculateMetrics, renderMetricsView } from './core/metrics.js'
 import { renderFlowView } from './core/flow.js'
 import { renderStructureView } from './ui/structure.js'
+import { escapeHtml } from './core/escape.js'
 import { EXAMPLES } from './data/examples.js'
 
 // ===== DOM References =====
@@ -41,6 +42,8 @@ const panelInput = document.getElementById('panel-input')
 // ===== State =====
 let currentAnalysis = null
 let highlightContainer = null
+/** 마지막으로 분석한 코드 원문. 지금 편집 중인 코드와 다르면 상태바 숫자는 옛것입니다. */
+let analyzedCode = null
 
 // ===== Editor Line Numbers =====
 function updateLineNumbers() {
@@ -92,46 +95,82 @@ codeInput.addEventListener('input', () => {
 
 // Tab key support in textarea
 codeInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Tab') {
-    e.preventDefault()
-    const start = codeInput.selectionStart
-    const end = codeInput.selectionEnd
-    codeInput.value = codeInput.value.substring(0, start) + '  ' + codeInput.value.substring(end)
-    codeInput.selectionStart = codeInput.selectionEnd = start + 2
-    updateLineNumbers()
-    renderEditorHighlight()
-  }
+  if (e.key !== 'Tab') return
+  e.preventDefault()
+  insertAtCursor('  ')
+  updateLineNumbers()
+  renderEditorHighlight()
+})
 
-  // Ctrl+Enter → analyze
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-    e.preventDefault()
-    analyze()
-  }
+/**
+ * 커서 자리에 글자를 끼워 넣습니다.
+ *
+ * `codeInput.value = …` 로 통째로 갈아 끼우면 브라우저가 쌓아 둔 되돌리기 기록이
+ * 통째로 날아갑니다 — Tab 한 번 눌렀다고 Ctrl+Z 가 먹통이 되면 편집기라고 하기 어렵습니다.
+ * `execCommand` 는 낡았지만 되돌리기 기록에 남는 유일한 길이라 먼저 시도하고,
+ * 막힌 환경에서만 직접 대입으로 물러섭니다.
+ */
+function insertAtCursor(text) {
+  codeInput.focus()
+  if (document.execCommand && document.execCommand('insertText', false, text)) return
+
+  const start = codeInput.selectionStart
+  const end = codeInput.selectionEnd
+  codeInput.value = codeInput.value.slice(0, start) + text + codeInput.value.slice(end)
+  codeInput.selectionStart = codeInput.selectionEnd = start + text.length
+}
+
+// Ctrl+Enter → analyze
+// 에디터에 포커스가 없어도 눌리게 문서 전체에서 받습니다 — 탭이나 버튼을 만지다가
+// 누르면 아무 일도 일어나지 않는 것이 안내문(“Ctrl + Enter”)과 어긋났습니다.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || !(e.ctrlKey || e.metaKey)) return
+  e.preventDefault()
+  analyze()
 })
 
 // ===== Quick Status (before analysis) =====
 function updateQuickStatus() {
   const code = codeInput.value
-  const lines = code.split('\n')
-  statusLines.textContent = `줄: ${lines.length}`
+  statusLines.textContent = `줄: ${code.split('\n').length}`
+  statusLang.textContent = selectLang.value.toUpperCase()
 
-  const lang = selectLang.value.toUpperCase()
-  statusLang.textContent = lang
+  // 코드를 고친 뒤에도 지난 분석 숫자가 그대로 남아 있으면, 지금 화면의 코드를 세어 본
+  // 값처럼 읽힙니다. 아직 세지 않았다는 뜻으로 — 로 되돌립니다.
+  if (analyzedCode !== null && code !== analyzedCode) markCountsUnknown()
+}
+
+/** 셀 수 없었거나 아직 세지 않은 상태 — 0 은 "세어 보니 없다" 는 뜻이라 쓰면 안 됩니다. */
+function markCountsUnknown() {
+  statusFunctions.textContent = '함수: —'
+  statusComponents.textContent = '컴포넌트: —'
+  statusHooks.textContent = 'Hook: —'
+  statusImports.textContent = 'Import: —'
 }
 
 // ===== Analysis =====
+// 분석은 중간에 await 을 거치므로 여러 번이 겹쳐 돌 수 있습니다 (버튼 연타·Ctrl+Enter·
+// 언어 변경). 실행마다 번호를 매기고, 기다렸다 돌아올 때마다 자기가 아직 최신인지
+// 확인합니다 — 그러지 않으면 늦게 끝난 옛 분석이 새 결과를 덮어씁니다.
+let analyzeRunId = 0
+
 // 파서는 @babel/parser 를 쓰기 때문에 번들이 큽니다. 동작 분석과 마찬가지로
 // 첫 분석 때 동적 import 로 불러와 초기 로딩에서 제외합니다(둘이 같은 청크를 공유).
 async function analyze() {
-  const code = codeInput.value.trim()
+  const rawCode = codeInput.value
+  const code = rawCode.trim()
   if (!code) return
 
   const language = selectLang.value
+  const runId = ++analyzeRunId
+  btnAnalyze.disabled = true
 
   try {
     // Parse
     const { parseCode } = await import('./core/parser.js')
+    if (runId !== analyzeRunId) return
     currentAnalysis = parseCode(code)
+    analyzedCode = rawCode
 
     // Update status bar
     updateStatusBar(currentAnalysis)
@@ -152,7 +191,7 @@ async function analyze() {
         panel.appendChild(renderParseError(currentAnalysis.error))
       }
       activateTab('highlight')
-      analyzeBehavior(code)
+      analyzeBehavior(code, runId)
       return
     }
 
@@ -192,10 +231,14 @@ async function analyze() {
     activateTab('highlight')
 
     // Render Behavior View (동작 분석은 별도 청크라 비동기로 붙입니다)
-    analyzeBehavior(code)
+    analyzeBehavior(code, runId)
   } catch (err) {
+    if (runId !== analyzeRunId) return
     console.error('Analysis error:', err)
     alert('코드 분석 중 오류가 발생했습니다: ' + err.message)
+  } finally {
+    // 뒤이어 시작된 분석이 있으면 그쪽이 버튼을 맡습니다.
+    if (runId === analyzeRunId) btnAnalyze.disabled = false
   }
 }
 
@@ -204,7 +247,8 @@ async function analyze() {
  * 첫 분석 때 동적 import 로 불러와 초기 로딩에서 제외합니다.
  * 여기서 실패해도 나머지 탭은 그대로 동작해야 하므로 예외를 가둡니다.
  */
-async function analyzeBehavior(code) {
+async function analyzeBehavior(code, runId) {
+  if (runId !== analyzeRunId) return
   panelBehavior.innerHTML = '<div class="placeholder-msg"><p>동작을 분석하는 중…</p></div>'
 
   try {
@@ -212,6 +256,7 @@ async function analyzeBehavior(code) {
       import('./core/behavior/index.js'),
       import('./ui/behavior.js'),
     ])
+    if (runId !== analyzeRunId) return
 
     const behavior = parseBehavior(code)
     const view = renderBehaviorView(behavior, (lineNum) => {
@@ -224,11 +269,12 @@ async function analyzeBehavior(code) {
     panelBehavior.innerHTML = ''
     panelBehavior.appendChild(view)
   } catch (err) {
+    if (runId !== analyzeRunId) return
     console.error('Behavior analysis error:', err)
     panelBehavior.innerHTML = `
       <div class="placeholder-msg">
         <p>동작 분석을 불러오지 못했습니다</p>
-        <span class="placeholder-shortcut">${err.message}</span>
+        <span class="placeholder-shortcut">${escapeHtml(err.message)}</span>
       </div>`
   }
 }
@@ -238,10 +284,7 @@ function updateStatusBar(analysis) {
 
   // 못 읽은 것을 0 으로 적으면 "세어 보니 없다" 로 읽힙니다. 셀 수 없었으면 그렇게 적습니다.
   if (analysis.error) {
-    statusFunctions.textContent = '함수: —'
-    statusComponents.textContent = '컴포넌트: —'
-    statusHooks.textContent = 'Hook: —'
-    statusImports.textContent = 'Import: —'
+    markCountsUnknown()
     return
   }
 
@@ -345,11 +388,20 @@ if (savedTheme) {
 
 // ===== Clear Code =====
 function clearCode() {
+  // 돌고 있던 분석이 뒤늦게 돌아와 방금 비운 화면을 다시 채우지 않도록 번호를 넘깁니다.
+  analyzeRunId++
+  btnAnalyze.disabled = false
+
   codeInput.value = ''
+  currentAnalysis = null
+  analyzedCode = null
+  // 패널을 통째로 갈아 끼우므로 예전 컨테이너는 화면에 없는 DOM 입니다.
+  // 남겨 두면 다음 이동 요청이 보이지 않는 노드를 가리킵니다.
+  highlightContainer = null
+
   updateLineNumbers()
   updateQuickStatus()
   renderEditorHighlight()
-  currentAnalysis = null
 
   // Reset panels to placeholder
   panelHighlight.innerHTML = `
@@ -397,14 +449,24 @@ btnExample.addEventListener('click', () => {
 })
 
 // ===== Export to Markdown =====
+// 버튼의 원래 모습은 한 번만 붙잡아 둡니다. 누를 때마다 읽으면 2 초 안에 다시 눌렀을 때
+// "복사 완료!" 를 원본으로 착각해 그 라벨이 그대로 굳습니다.
+const EXPORT_LABEL = btnExport.innerHTML
+let exportResetTimer = null
+
 btnExport.addEventListener('click', async () => {
   if (!currentAnalysis) {
     alert('먼저 코드를 분석해주세요.')
     return
   }
 
-  const originalText = btnExport.innerHTML
-  
+  // 파싱에 실패한 결과로 마크다운을 만들면 빈 목록이 "컴포넌트 없음" 으로 적힙니다.
+  // 다른 탭은 "못 셌다" 라고 말하는데 추출본만 0 을 사실처럼 옮기는 셈입니다.
+  if (currentAnalysis.error) {
+    alert('문법 오류로 코드를 읽지 못해 추출할 수 없습니다.\n\n' + currentAnalysis.error.message)
+    return
+  }
+
   try {
     const md = generateMarkdown(currentAnalysis)
     await navigator.clipboard.writeText(md)
@@ -414,8 +476,10 @@ btnExport.addEventListener('click', async () => {
     console.error(err)
   }
 
-  setTimeout(() => {
-    btnExport.innerHTML = originalText
+  if (exportResetTimer) clearTimeout(exportResetTimer)
+  exportResetTimer = setTimeout(() => {
+    btnExport.innerHTML = EXPORT_LABEL
+    exportResetTimer = null
   }, 2000)
 })
 
@@ -434,7 +498,9 @@ function generateMarkdown(analysis) {
   components.forEach(c => {
     const badges = []
     if (c.isAsync) badges.push('Async')
-    if (c.lineCount > 100 || (c.hooks && c.hooks.length > 5)) badges.push('🚨 Complex')
+    // hooks 는 이름 기준 중복 제거된 목록이라 덩치 판정에는 실제 호출 수를 씁니다.
+    const hookCalls = c.hookCallCount ?? (c.hooks ? c.hooks.length : 0)
+    if (c.lineCount > 100 || hookCalls > 5) badges.push('🚨 Complex')
     
     md += `- **${c.name}** (${c.lineCount} lines) ${badges.length ? `[${badges.join(', ')}]` : ''}\n`
     if (c.hooks && c.hooks.length > 0) {
@@ -457,37 +523,58 @@ function generateMarkdown(analysis) {
 }
 
 // ===== Panel Resizer =====
+// 마우스 전용 이벤트 대신 포인터 이벤트를 씁니다 — 터치·펜에서도 같은 코드로 끌립니다.
+const PANEL_MIN_WIDTH = 280
+const PANEL_WIDTH_KEY = 'code-bunseki-input-width'
+
+const appMain = document.getElementById('app-main')
 let isResizing = false
 
-resizer.addEventListener('mousedown', (e) => {
+/** 창 크기가 달라져도 두 패널이 모두 최소 폭을 지키도록 가둡니다 */
+function clampPanelWidth(width, containerWidth) {
+  const maxWidth = containerWidth - PANEL_MIN_WIDTH
+  if (maxWidth < PANEL_MIN_WIDTH) return null
+  return Math.min(Math.max(width, PANEL_MIN_WIDTH), maxWidth)
+}
+
+resizer.addEventListener('pointerdown', (e) => {
   isResizing = true
   resizer.classList.add('active')
+  resizer.setPointerCapture(e.pointerId)
   document.body.style.cursor = 'col-resize'
   document.body.style.userSelect = 'none'
   e.preventDefault()
 })
 
-document.addEventListener('mousemove', (e) => {
+resizer.addEventListener('pointermove', (e) => {
   if (!isResizing) return
-
-  const mainRect = document.getElementById('app-main').getBoundingClientRect()
-  const newWidth = e.clientX - mainRect.left
-  const minWidth = 280
-  const maxWidth = mainRect.width - 280
-
-  if (newWidth >= minWidth && newWidth <= maxWidth) {
-    panelInput.style.width = newWidth + 'px'
-  }
+  const mainRect = appMain.getBoundingClientRect()
+  const width = clampPanelWidth(e.clientX - mainRect.left, mainRect.width)
+  if (width !== null) panelInput.style.width = width + 'px'
 })
 
-document.addEventListener('mouseup', () => {
-  if (isResizing) {
-    isResizing = false
-    resizer.classList.remove('active')
-    document.body.style.cursor = ''
-    document.body.style.userSelect = ''
+function endResize(e) {
+  if (!isResizing) return
+  isResizing = false
+  resizer.releasePointerCapture(e.pointerId)
+  resizer.classList.remove('active')
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  // 정한 폭을 기억합니다 — 새로고침마다 기본값으로 돌아가면 매번 다시 끌어야 합니다.
+  if (panelInput.style.width) {
+    localStorage.setItem(PANEL_WIDTH_KEY, parseInt(panelInput.style.width, 10))
   }
-})
+}
+
+resizer.addEventListener('pointerup', endResize)
+resizer.addEventListener('pointercancel', endResize)
+
+// Restore saved width
+const savedWidth = parseInt(localStorage.getItem(PANEL_WIDTH_KEY), 10)
+if (Number.isFinite(savedWidth)) {
+  const width = clampPanelWidth(savedWidth, appMain.getBoundingClientRect().width)
+  if (width !== null) panelInput.style.width = width + 'px'
+}
 
 // ===== Initialize =====
 updateLineNumbers()
